@@ -1,0 +1,23 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+* {
+  padding: 0;
+  margin: 0;
+}
+
+/* 修复分隔条样式 */
+.mosaic-split.-row {
+  @apply w-1 cursor-col-resize bg-gray-200 hover:bg-blue-400 z-50;
+}
+
+/* 隐藏工具栏 */
+.mosaic-window-toolbar {
+  @apply hidden;
+}
+
+/* 确保容器填充 */
+.mosaic-root {
+  @apply h-full w-full;
+}
