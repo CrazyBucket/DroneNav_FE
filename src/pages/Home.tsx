@@ -15,7 +15,6 @@ type AppMosaicParent = MosaicParent<ViewId> & {
 
 const MIN_PANE_WIDTH = 200; // 最小宽度 200px
 const DEFAULT_WIDTH = 300; // 默认宽度 300px
-const COLLAPSED_WIDTH = 48; // 收缩时宽度
 
 const getSplitPercentage = (widthPx: number) => {
   const viewportWidth = window.innerWidth;
@@ -54,7 +53,6 @@ const getInitialLayout = (): AppMosaicParent => {
 
 const Home = () => {
   const [layout, setLayout] = useState<AppMosaicParent>(getInitialLayout());
-  const [collapsed, setCollapsed] = useState(false);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -95,17 +93,6 @@ const Home = () => {
     }
   };
 
-  // 处理折叠状态变更
-  const handleCollapse = (isCollapsed: boolean) => {
-    setCollapsed(isCollapsed);
-    setLayout(prev => ({
-      ...prev,
-      splitPercentage: getSplitPercentage(
-        isCollapsed ? COLLAPSED_WIDTH : DEFAULT_WIDTH
-      ),
-    }));
-  };
-
   return (
     <div className="h-screen flex flex-col">
       <Navbar />
@@ -114,7 +101,7 @@ const Home = () => {
           renderTile={id => (
             <div className="h-full">
               {id === "left-pane" ? (
-                <Sidebar collapsed={collapsed} onCollapse={handleCollapse} />
+                <Sidebar />
               ) : (
                 <div className="h-full bg-white">右侧主内容区</div>
               )}
