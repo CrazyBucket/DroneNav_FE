@@ -1,0 +1,5 @@
+/* 覆盖样式 */
+.mosaic-split.-row {
+    width: 1px;
+    background: #e5e7eb;
+}

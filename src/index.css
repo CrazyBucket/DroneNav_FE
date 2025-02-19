@@ -21,3 +21,9 @@
 .mosaic-root {
   @apply h-full w-full;
 }
+html,
+body,
+#root {
+  height: 100%;
+  overflow: hidden;
+}
