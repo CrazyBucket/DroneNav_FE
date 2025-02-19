@@ -3,6 +3,7 @@ import { Mosaic, MosaicNode, MosaicParent } from "react-mosaic-component";
 import Navbar from "@components/layout/Navbar";
 import "react-mosaic-component/react-mosaic-component.css";
 import Sidebar from "@/components/layout/Sidebar";
+import { apis } from "@/services/api";
 
 type ViewId = "left-pane" | "right-pane";
 
@@ -38,7 +39,7 @@ const getInitialLayout = (): AppMosaicParent => {
         };
       }
     } catch (e) {
-      console.warn("Invalid layout data");
+      console.warn("Invalid layout data", e);
     }
   }
 
@@ -53,6 +54,14 @@ const getInitialLayout = (): AppMosaicParent => {
 
 const Home = () => {
   const [layout, setLayout] = useState<AppMosaicParent>(getInitialLayout());
+
+  useEffect(() => {
+    const fetchData = async () => {
+      const res = await apis.getTest();
+      console.log(res);
+    };
+    fetchData();
+  }, []);
 
   // 处理窗口大小变化
   useEffect(() => {
