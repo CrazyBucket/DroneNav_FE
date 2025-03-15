@@ -1,5 +1,5 @@
 import * as THREE from 'three'
-import { ObstacleConfig, ObstacleType } from '../models/obstacles/ObstacleTypes';
+import { ObstacleConfig } from '../models/obstacles/ObstacleTypes';
 import { CubeObstacle } from '../models/obstacles/CubeObstacle';
 import { SceneManager } from '../SceneManager';
 
@@ -20,13 +20,6 @@ export class ObstacleFactory {
                     position: config.position
                 });
 
-            case 'SPHERE':
-                return this.createSphere({
-                    radius: config.size ?? ObstacleFactory.DEFAULT_SIZE,
-                    color,
-                    position: config.position
-                });
-
             default:
                 throw new Error(`Unsupported obstacle type: ${config.type}`);
         }
@@ -43,22 +36,7 @@ export class ObstacleFactory {
             params.color,
             params.position
         );
-        SceneManager.getInstance().add(obstacle);
-        return obstacle;
-    }
-
-    private createSphere(params: {
-        radius: number;
-        color: number;
-        position: [number, number, number];
-    }) {
-        const obstacle = new SphereObstacle(
-            `sphere_${Date.now()}`,
-            params.radius,
-            params.color,
-            params.position
-        );
-        SceneManager.getInstance().add(obstacle);
+        SceneManager.getInstance().addObject(obstacle);
         return obstacle;
     }
 }
