@@ -1,10 +1,13 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Mosaic, MosaicNode, MosaicParent } from "react-mosaic-component";
 import Navbar from "@components/layout/Navbar";
 import "react-mosaic-component/react-mosaic-component.css";
 import Sidebar from "@/components/layout/Sidebar";
-import { apis } from "@/services/api";
+// import { apis } from "@/services/api";
 import "./index.css";
+import { useScene, SceneProvider } from "../core/SceneContext";
+import * as THREE from "three";
+import { SceneManager } from "@/core/SceneManager";
 
 type ViewId = "left-pane" | "right-pane";
 
@@ -51,18 +54,31 @@ const getInitialLayout = (): AppMosaicParent => {
   };
 };
 
-const Home = () => {
+const HomeContent = () => {
   const [layout, setLayout] = useState<AppMosaicParent>(getInitialLayout());
+  const { containerRef } = useScene();
+  const sceneManagerRef = useRef<SceneManager | null>(null);
+
+  // useEffect(() => {
+  //   const fetchData = async () => {
+  //     const res = await apis.getTest();
+  //     console.log(res);
+  //   };
+  //   fetchData();
+  // }, []);
 
   useEffect(() => {
-    const fetchData = async () => {
-      const res = await apis.getTest();
-      console.log(res);
-    };
-    fetchData();
-  }, []);
+    if (sceneManagerRef.current) {
+      const container = document.getElementById("scene-container");
+      if (container) {
+        sceneManagerRef.current.resize(
+          container.clientWidth,
+          container.clientHeight
+        );
+      }
+    }
+  }, [layout.splitPercentage]);
 
-  // 处理窗口大小变化
   useEffect(() => {
     const handleResize = () => {
       setLayout(prev => ({
@@ -71,7 +87,20 @@ const Home = () => {
           (prev.splitPercentage * window.innerWidth) / 100
         ),
       }));
+
+      // 确保在窗口大小变化时也更新场景尺寸
+      if (sceneManagerRef.current) {
+        const container = document.getElementById("scene-container");
+        if (container) {
+          sceneManagerRef.current.resize(
+            container.clientWidth,
+            container.clientHeight
+          );
+        }
+      }
     };
+
+    handleResize();
 
     window.addEventListener("resize", handleResize);
     return () => window.removeEventListener("resize", handleResize);
@@ -93,6 +122,40 @@ const Home = () => {
     }
   };
 
+  useEffect(() => {
+    const manager = SceneManager.getInstance(containerRef.current!);
+    sceneManagerRef.current = manager;
+
+    // 在useEffect中添加立方体
+    const cubeGeometry = new THREE.BoxGeometry(10, 10, 10);
+    const cubeMaterial = new THREE.MeshStandardMaterial({
+      color: 0x00ff00,
+      metalness: 0.7,
+      roughness: 0.2,
+      emissive: 0x004400,
+      emissiveIntensity: 0.5,
+    });
+    const cube = new THREE.Mesh(cubeGeometry, cubeMaterial);
+    cube.castShadow = true;
+    cube.receiveShadow = true;
+
+    const animateCube = () => {
+      requestAnimationFrame(animateCube);
+    };
+    animateCube();
+
+    manager.addObject({
+      id: "test-cube",
+      object: cube,
+      selectable: true,
+    });
+
+    return () => {
+      manager.removeObject("test-cube");
+      sceneManagerRef.current = null;
+    };
+  }, [containerRef]);
+
   return (
     <div className="h-screen flex flex-col">
       <Navbar />
@@ -103,7 +166,13 @@ const Home = () => {
               {id === "left-pane" ? (
                 <Sidebar />
               ) : (
-                <div className="h-full bg-white">右侧主内容区</div>
+                <div className="h-full">
+                  <div
+                    id="scene-container"
+                    ref={containerRef}
+                    style={{ width: "100%", height: "100%" }}
+                  />
+                </div>
               )}
             </div>
           )}
@@ -116,6 +185,14 @@ const Home = () => {
         />
       </div>
     </div>
+  );
+};
+
+const Home = () => {
+  return (
+    <SceneProvider>
+      <HomeContent />
+    </SceneProvider>
   );
 };
 
