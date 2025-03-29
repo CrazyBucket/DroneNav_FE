@@ -27,3 +27,11 @@ body,
   height: 100%;
   overflow: hidden;
 }
+
+.anticon {
+  transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.ant-btn:hover .anticon {
+  transform: scale(1.1);
+}

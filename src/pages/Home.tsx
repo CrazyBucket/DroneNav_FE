@@ -8,54 +8,69 @@ import "./index.css";
 import { useScene, SceneProvider } from "../core/SceneContext";
 import * as THREE from "three";
 import { SceneManager } from "@/core/SceneManager";
+import { DEFAULT_WIDTH, LEFT_NAV_WIDTH, MIN_PANE_WIDTH } from "@/store/state";
 
 type ViewId = "left-pane" | "right-pane";
+const USER_SPLIT_KEY = "user-split-percentage";
 
 type AppMosaicNode = MosaicNode<ViewId>;
 type AppMosaicParent = MosaicParent<ViewId> & {
   splitPercentage: number;
 };
 
-const MIN_PANE_WIDTH = 200; // 最小宽度 200px
-const DEFAULT_WIDTH = 300; // 默认宽度 300px
-
 const getSplitPercentage = (widthPx: number) => {
   const viewportWidth = window.innerWidth;
   return Math.min(Math.max((widthPx / viewportWidth) * 100, 0), 100);
 };
 
-const getInitialLayout = (): AppMosaicParent => {
-  const saved = localStorage.getItem("mosaic-layout");
-  if (saved) {
+const getInitialState = () => {
+  const savedLayout = localStorage.getItem("mosaic-layout");
+  const isCollapsed = localStorage.getItem("sidebar-collapsed") === "true";
+  const userSplit = localStorage.getItem(USER_SPLIT_KEY);
+
+  if (savedLayout) {
     try {
-      const parsed = JSON.parse(saved);
-      if (
-        typeof parsed === "object" &&
-        parsed?.splitPercentage &&
-        parsed.direction === "row"
-      ) {
-        return {
-          direction: "row",
-          first: "left-pane",
-          second: "right-pane",
-          splitPercentage: parsed.splitPercentage,
-        };
-      }
+      const parsed = JSON.parse(savedLayout) as AppMosaicParent;
+      return {
+        layout: {
+          ...parsed,
+          // 展开时优先使用用户手动保存的比例
+          splitPercentage: isCollapsed
+            ? getSplitPercentage(LEFT_NAV_WIDTH)
+            : userSplit
+            ? parseFloat(userSplit)
+            : parsed.splitPercentage,
+        },
+        collapsed: isCollapsed,
+      };
     } catch (e) {
       console.warn("Invalid layout data", e);
     }
   }
 
   return {
-    direction: "row",
-    first: "left-pane",
-    second: "right-pane",
-    splitPercentage: getSplitPercentage(DEFAULT_WIDTH),
+    layout: {
+      direction: "row",
+      first: "left-pane",
+      second: "right-pane",
+      splitPercentage: getSplitPercentage(
+        isCollapsed
+          ? LEFT_NAV_WIDTH
+          : userSplit
+          ? (parseFloat(userSplit) * window.innerWidth) / 100
+          : LEFT_NAV_WIDTH + DEFAULT_WIDTH
+      ),
+    } as AppMosaicParent,
+    collapsed: isCollapsed,
   };
 };
 
 const HomeContent = () => {
-  const [layout, setLayout] = useState<AppMosaicParent>(getInitialLayout());
+  const [layout, setLayout] = useState<AppMosaicParent>(
+    getInitialState().layout
+  );
+  const [collapsed, setCollapsed] = useState(getInitialState().collapsed);
+  const prevWidthRef = useRef(DEFAULT_WIDTH);
   const { containerRef } = useScene();
   const sceneManagerRef = useRef<SceneManager | null>(null);
 
@@ -109,12 +124,36 @@ const HomeContent = () => {
   // 保存布局
   useEffect(() => {
     localStorage.setItem("mosaic-layout", JSON.stringify(layout));
-  }, [layout]);
+    localStorage.setItem("sidebar-collapsed", String(collapsed));
+  }, [layout, collapsed]);
 
-  // 处理布局变更
+  // 修改折叠处理逻辑
+  const handleCollapse = (newCollapsed: boolean) => {
+    const userSplit = localStorage.getItem(USER_SPLIT_KEY);
+
+    setLayout(prev => ({
+      ...prev,
+      splitPercentage: newCollapsed
+        ? getSplitPercentage(LEFT_NAV_WIDTH)
+        : userSplit
+        ? parseFloat(userSplit)
+        : getSplitPercentage(LEFT_NAV_WIDTH + DEFAULT_WIDTH),
+    }));
+
+    setCollapsed(newCollapsed);
+    localStorage.setItem("sidebar-collapsed", String(newCollapsed));
+  };
+
   const handleLayoutChange = (newNode: AppMosaicNode | null) => {
     if (newNode && typeof newNode !== "string") {
       const validNode = newNode as AppMosaicParent;
+      // 保存用户调整的比例（仅在侧边栏展开时）
+      if (!collapsed) {
+        localStorage.setItem(
+          USER_SPLIT_KEY,
+          validNode.splitPercentage.toString()
+        );
+      }
       setLayout({
         ...validNode,
         splitPercentage: validNode.splitPercentage,
@@ -164,13 +203,13 @@ const HomeContent = () => {
           renderTile={id => (
             <div className="h-full">
               {id === "left-pane" ? (
-                <Sidebar />
+                <Sidebar collapsed={collapsed} onCollapse={handleCollapse} />
               ) : (
-                <div className="h-full">
+                <div className="h-full py-2 mr-2 transition-all duration-300">
                   <div
                     id="scene-container"
                     ref={containerRef}
-                    style={{ width: "100%", height: "100%" }}
+                    className="rounded-xl overflow-hidden h-full w-full"
                   />
                 </div>
               )}
@@ -178,9 +217,13 @@ const HomeContent = () => {
           )}
           value={layout}
           onChange={handleLayoutChange}
-          resize={{
-            minimumPaneSizePercentage: getSplitPercentage(MIN_PANE_WIDTH),
-          }}
+          resize={
+            collapsed
+              ? "DISABLED"
+              : {
+                  minimumPaneSizePercentage: getSplitPercentage(MIN_PANE_WIDTH),
+                }
+          }
           className="h-full"
         />
       </div>

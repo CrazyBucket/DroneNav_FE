@@ -1,0 +1,9 @@
+/* 覆盖Ant Design按钮的默认hover样式 */
+.ant-btn:not([disabled]):hover {
+  background-color: transparent !important;
+}
+
+/* 确保图标缩放动画 */
+.anticon {
+  transition: transform 0.3s ease-in-out;
+}
