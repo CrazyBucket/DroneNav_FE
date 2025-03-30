@@ -21,3 +21,44 @@
 .sidebar-container {
   min-width: 56px; /* 左侧导航宽度 */
 }
+@keyframes smoke-move {
+  0% { transform: translate(-5%, -5%) scale(1.1); }
+  50% { transform: translate(5%, 5%) scale(1.15); }
+  100% { transform: translate(-5%, -5%) scale(1.1); }
+}
+
+@keyframes smoke-flow {
+  0% { transform: translateX(-10%) skew(-5deg); }
+  100% { transform: translateX(10%) skew(5deg); }
+}
+
+@keyframes twinkle {
+  0%, 100% { opacity: 0.3; }
+  50% { opacity: 0.8; }
+}
+
+.animate-smoke-1 {
+  animation: smoke-move 6s ease-in-out infinite;
+  -webkit-background-blend-mode: overlay;
+  background-blend-mode: overlay;
+}
+
+.animate-smoke-2 {
+  animation: smoke-flow 4s ease-in-out infinite alternate;
+  mix-blend-mode: soft-light;
+}
+
+.animate-twinkle {
+  animation: twinkle 6s ease-in-out infinite;
+}
+
+.nav-header:hover {
+  background: linear-gradient(
+    145deg,
+    rgba(0, 20, 10, 0.9) 0%,
+    rgba(0, 30, 15, 0.8) 100%
+  ) !important;
+  box-shadow: 
+    0 0 15px rgba(0, 40, 20, 0.5),
+    inset 0 0 10px rgba(0, 255, 150, 0.1);
+}
