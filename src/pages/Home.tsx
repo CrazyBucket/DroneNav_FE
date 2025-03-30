@@ -9,7 +9,7 @@ import { useScene, SceneProvider } from "../core/SceneContext";
 import * as THREE from "three";
 import { SceneManager } from "@/core/SceneManager";
 import { DEFAULT_WIDTH, LEFT_NAV_WIDTH, MIN_PANE_WIDTH } from "@/store/state";
-import Render, { RenderHandle } from "@/components/render/Render";
+import Render, { RenderHandle } from "@/components/render/render";
 
 type ViewId = "left-pane" | "right-pane";
 const USER_SPLIT_KEY = "user-split-percentage";
@@ -134,32 +134,12 @@ const HomeContent = () => {
     const manager = SceneManager.getInstance(containerRef.current!);
     sceneManagerRef.current = manager;
 
-    // 在useEffect中添加立方体
-    const cubeGeometry = new THREE.BoxGeometry(10, 10, 10);
-    const cubeMaterial = new THREE.MeshStandardMaterial({
-      color: 0x00ff00,
-      metalness: 0.7,
-      roughness: 0.2,
-      emissive: 0x004400,
-      emissiveIntensity: 0.5,
-    });
-    const cube = new THREE.Mesh(cubeGeometry, cubeMaterial);
-    cube.castShadow = true;
-    cube.receiveShadow = true;
-
     const animateCube = () => {
       requestAnimationFrame(animateCube);
     };
     animateCube();
 
-    manager.addObject({
-      id: "test-cube",
-      object: cube,
-      selectable: true,
-    });
-
     return () => {
-      manager.removeObject("test-cube");
       sceneManagerRef.current = null;
     };
   }, [containerRef]);
