@@ -9,6 +9,7 @@ import { useScene, SceneProvider } from "../core/SceneContext";
 import * as THREE from "three";
 import { SceneManager } from "@/core/SceneManager";
 import { DEFAULT_WIDTH, LEFT_NAV_WIDTH, MIN_PANE_WIDTH } from "@/store/state";
+import Render, { RenderHandle } from "@/components/render/Render";
 
 type ViewId = "left-pane" | "right-pane";
 const USER_SPLIT_KEY = "user-split-percentage";
@@ -72,10 +73,10 @@ const HomeContent = () => {
     getInitialState().layout
   );
   const [collapsed, setCollapsed] = useState(getInitialState().collapsed);
-  const prevWidthRef = useRef(DEFAULT_WIDTH);
   const { containerRef } = useScene();
   const sceneManagerRef = useRef<SceneManager | null>(null);
   const isAnimating = useRef(false);
+  const renderRef = useRef<RenderHandle>(null);
 
   // useEffect(() => {
   //   const fetchData = async () => {
@@ -240,11 +241,7 @@ const HomeContent = () => {
                 <Sidebar collapsed={collapsed} onCollapse={handleCollapse} />
               ) : (
                 <div className="h-full py-2 mr-2 transition-all duration-300">
-                  <div
-                    id="scene-container"
-                    ref={containerRef}
-                    className="rounded-xl overflow-hidden h-full w-full"
-                  />
+                  <Render ref={renderRef} />
                 </div>
               )}
             </div>
