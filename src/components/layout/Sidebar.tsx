@@ -5,10 +5,10 @@ import {
   SettingOutlined,
   ControlOutlined,
   LeftOutlined,
-  RightOutlined,
 } from "@ant-design/icons";
 import clsx from "clsx";
 import "./index.css";
+import { MIN_RIGHT_PANE_WIDTH } from "@/store/state";
 
 type FunctionArea = "views" | "settings" | "controls";
 
@@ -58,7 +58,7 @@ const Sidebar: React.FC<SidebarProps> = ({
   return (
     <div className={`flex h-full p-2 ${className}`}>
       {/* 左侧导航区 */}
-      <div className="w-14 backdrop-blur-md bg-white/10 border border-gray-600/50 rounded-xl flex flex-col items-center py-2 gap-4 mr-2 shadow-lg shadow-black/10">
+      <div className="w-14 flex-shrink-0 backdrop-blur-md bg-white/10 border border-gray-600/50 rounded-xl flex flex-col items-center py-2 gap-4 mr-2 shadow-lg shadow-black/10">
         {navButtons.map(({ key, icon, title }) => (
           <Button
             key={key}
@@ -73,7 +73,7 @@ const Sidebar: React.FC<SidebarProps> = ({
               },
             })}
             className={clsx(
-              "h-10 flex items-center justify-center transition-all",
+              "h-10 w-10 flex items-center justify-center transition-all",
               activeArea === key
                 ? "!bg-white/20 backdrop-blur-sm hover:!bg-white/20"
                 : "hover:!bg-white/15"
@@ -86,23 +86,15 @@ const Sidebar: React.FC<SidebarProps> = ({
         <Button
           type="text"
           icon={
-            collapsed ? (
-              <RightOutlined
-                style={{
-                  color: "rgba(255,255,255,0.8)",
-                  fontSize: "16px",
-                  transition: "all 0.3s",
-                }}
-              />
-            ) : (
-              <LeftOutlined
-                style={{
-                  color: "rgba(255,255,255,0.8)",
-                  fontSize: "16px",
-                  transition: "all 0.3s",
-                }}
-              />
-            )
+            <LeftOutlined
+              style={{
+                color: "rgba(255,255,255,0.8)",
+                fontSize: "16px",
+                transition: "transform 0.3s",
+                transform: `rotate(${collapsed ? 180 : 0}deg)`,
+                transformOrigin: "center",
+              }}
+            />
           }
           className="mt-auto h-10 flex items-center justify-center transition-all hover:bg-white/15"
           style={{ width: "36px" }}
@@ -113,16 +105,24 @@ const Sidebar: React.FC<SidebarProps> = ({
       {/* 右侧功能区 */}
       <div
         className={clsx(
-          "sidebar-content", // 添加动画类
+          "flex flex-col",
           "rounded-xl backdrop-blur-md bg-white/10 border border-gray-600/50",
-          "flex flex-col shadow-lg shadow-black/10",
+          "shadow-lg shadow-black/10",
+          "transition-all duration-300 ease-out",
+          "overflow-hidden",
           collapsed ? "w-0 opacity-0 ml-[-16px]" : "flex-1 opacity-100"
         )}
+        style={{
+          minWidth: collapsed ? 0 : `${MIN_RIGHT_PANE_WIDTH}px`,
+          willChange: "width, opacity, margin",
+        }}
       >
-        <div className="h-12 border-b border-gray-600/50 flex items-center px-4 text-white/90 font-medium">
-          {navButtons.find(btn => btn.key === activeArea)?.title}
+        <div className="min-w-[360px] h-full flex flex-col">
+          <div className="h-12 border-b border-gray-600/50 flex items-center px-4 text-white/90 font-medium">
+            {navButtons.find(btn => btn.key === activeArea)?.title}
+          </div>
+          <div className="flex-1 overflow-auto">{renderContent()}</div>
         </div>
-        {renderContent()}
       </div>
     </div>
   );

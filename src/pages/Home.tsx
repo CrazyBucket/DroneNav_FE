@@ -12,6 +12,8 @@ import { DEFAULT_WIDTH, LEFT_NAV_WIDTH, MIN_PANE_WIDTH } from "@/store/state";
 
 type ViewId = "left-pane" | "right-pane";
 const USER_SPLIT_KEY = "user-split-percentage";
+const ANIMATION_DURATION = 300; // 动画时长300ms
+const easingFunction = (t: number) => t * (2 - t); // easeOutQuad 缓动函数
 
 type AppMosaicNode = MosaicNode<ViewId>;
 type AppMosaicParent = MosaicParent<ViewId> & {
@@ -73,6 +75,7 @@ const HomeContent = () => {
   const prevWidthRef = useRef(DEFAULT_WIDTH);
   const { containerRef } = useScene();
   const sceneManagerRef = useRef<SceneManager | null>(null);
+  const isAnimating = useRef(false);
 
   // useEffect(() => {
   //   const fetchData = async () => {
@@ -81,6 +84,11 @@ const HomeContent = () => {
   //   };
   //   fetchData();
   // }, []);
+
+  const layoutRef = useRef(layout);
+  useEffect(() => {
+    layoutRef.current = layout;
+  }, [layout]);
 
   useEffect(() => {
     if (sceneManagerRef.current) {
@@ -121,46 +129,6 @@ const HomeContent = () => {
     return () => window.removeEventListener("resize", handleResize);
   }, []);
 
-  // 保存布局
-  useEffect(() => {
-    localStorage.setItem("mosaic-layout", JSON.stringify(layout));
-    localStorage.setItem("sidebar-collapsed", String(collapsed));
-  }, [layout, collapsed]);
-
-  // 修改折叠处理逻辑
-  const handleCollapse = (newCollapsed: boolean) => {
-    const userSplit = localStorage.getItem(USER_SPLIT_KEY);
-
-    setLayout(prev => ({
-      ...prev,
-      splitPercentage: newCollapsed
-        ? getSplitPercentage(LEFT_NAV_WIDTH)
-        : userSplit
-        ? parseFloat(userSplit)
-        : getSplitPercentage(LEFT_NAV_WIDTH + DEFAULT_WIDTH),
-    }));
-
-    setCollapsed(newCollapsed);
-    localStorage.setItem("sidebar-collapsed", String(newCollapsed));
-  };
-
-  const handleLayoutChange = (newNode: AppMosaicNode | null) => {
-    if (newNode && typeof newNode !== "string") {
-      const validNode = newNode as AppMosaicParent;
-      // 保存用户调整的比例（仅在侧边栏展开时）
-      if (!collapsed) {
-        localStorage.setItem(
-          USER_SPLIT_KEY,
-          validNode.splitPercentage.toString()
-        );
-      }
-      setLayout({
-        ...validNode,
-        splitPercentage: validNode.splitPercentage,
-      });
-    }
-  };
-
   useEffect(() => {
     const manager = SceneManager.getInstance(containerRef.current!);
     sceneManagerRef.current = manager;
@@ -194,6 +162,72 @@ const HomeContent = () => {
       sceneManagerRef.current = null;
     };
   }, [containerRef]);
+
+  // 保存布局
+  useEffect(() => {
+    localStorage.setItem("mosaic-layout", JSON.stringify(layout));
+    localStorage.setItem("sidebar-collapsed", String(collapsed));
+  }, [layout, collapsed]);
+
+  const handleCollapse = (newCollapsed: boolean) => {
+    const userSplit = localStorage.getItem(USER_SPLIT_KEY);
+    const target = newCollapsed
+      ? getSplitPercentage(LEFT_NAV_WIDTH)
+      : userSplit
+      ? parseFloat(userSplit)
+      : getSplitPercentage(LEFT_NAV_WIDTH + DEFAULT_WIDTH);
+
+    animateLayout(target);
+    setCollapsed(newCollapsed);
+    localStorage.setItem("sidebar-collapsed", String(newCollapsed));
+  };
+
+  const animateLayout = (targetPercentage: number) => {
+    isAnimating.current = true;
+    const startTime = Date.now();
+    const startPercentage = layoutRef.current.splitPercentage; // 使用 ref 获取最新值
+    let animationFrame: number;
+
+    const tick = () => {
+      const elapsed = Date.now() - startTime;
+      const progress = Math.min(elapsed / ANIMATION_DURATION, 1);
+      const easedProgress = easingFunction(progress);
+
+      const newPercentage =
+        startPercentage + (targetPercentage - startPercentage) * easedProgress;
+
+      setLayout(prev => ({
+        ...prev,
+        splitPercentage: newPercentage,
+      }));
+
+      if (progress < 1) {
+        animationFrame = requestAnimationFrame(tick);
+        isAnimating.current = false;
+      }
+    };
+
+    animationFrame = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(animationFrame); // 返回清理函数
+  };
+
+  const handleLayoutChange = (newNode: AppMosaicNode | null) => {
+    if (isAnimating.current) return;
+    if (newNode && typeof newNode !== "string") {
+      const validNode = newNode as AppMosaicParent;
+      // 保存用户调整的比例（仅在侧边栏展开时）
+      if (!collapsed) {
+        localStorage.setItem(
+          USER_SPLIT_KEY,
+          validNode.splitPercentage.toString()
+        );
+      }
+      setLayout({
+        ...validNode,
+        splitPercentage: validNode.splitPercentage,
+      });
+    }
+  };
 
   return (
     <div className="h-screen flex flex-col">
