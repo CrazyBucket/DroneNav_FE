@@ -3,12 +3,16 @@ import { Mosaic, MosaicNode, MosaicParent } from "react-mosaic-component";
 import Navbar from "@components/layout/Navbar";
 import "react-mosaic-component/react-mosaic-component.css";
 import Sidebar from "@/components/layout/Sidebar";
-// import { apis } from "@/services/api";
+import { apis } from "@/services/api";
 import "./index.css";
 import { useScene, SceneProvider } from "../core/SceneContext";
-import * as THREE from "three";
 import { SceneManager } from "@/core/SceneManager";
-import { DEFAULT_WIDTH, LEFT_NAV_WIDTH, MIN_PANE_WIDTH } from "@/store/state";
+import {
+  DEFAULT_WIDTH,
+  LEFT_NAV_WIDTH,
+  MIN_PANE_WIDTH,
+  SCENE_MIN_WIDTH,
+} from "@/store/state";
 import Render, { RenderHandle } from "@/components/render/render";
 
 type ViewId = "left-pane" | "right-pane";
@@ -31,18 +35,31 @@ const getInitialState = () => {
   const isCollapsed = localStorage.getItem("sidebar-collapsed") === "true";
   const userSplit = localStorage.getItem(USER_SPLIT_KEY);
 
+  const calculateValidSplit = (split: number) => {
+    const viewportWidth = window.innerWidth;
+    const rightWidth = ((100 - split) / 100) * viewportWidth;
+    if (rightWidth < SCENE_MIN_WIDTH) {
+      return Math.max(
+        0,
+        ((viewportWidth - SCENE_MIN_WIDTH) / viewportWidth) * 100
+      );
+    }
+    return split;
+  };
+
   if (savedLayout) {
     try {
       const parsed = JSON.parse(savedLayout) as AppMosaicParent;
+      const baseSplit = isCollapsed
+        ? getSplitPercentage(LEFT_NAV_WIDTH)
+        : userSplit
+        ? parseFloat(userSplit)
+        : parsed.splitPercentage;
+
       return {
         layout: {
           ...parsed,
-          // 展开时优先使用用户手动保存的比例
-          splitPercentage: isCollapsed
-            ? getSplitPercentage(LEFT_NAV_WIDTH)
-            : userSplit
-            ? parseFloat(userSplit)
-            : parsed.splitPercentage,
+          splitPercentage: calculateValidSplit(baseSplit),
         },
         collapsed: isCollapsed,
       };
@@ -51,18 +68,18 @@ const getInitialState = () => {
     }
   }
 
+  const initialWidth = isCollapsed
+    ? LEFT_NAV_WIDTH
+    : userSplit
+    ? (parseFloat(userSplit) * window.innerWidth) / 100
+    : LEFT_NAV_WIDTH + DEFAULT_WIDTH;
+
   return {
     layout: {
       direction: "row",
       first: "left-pane",
       second: "right-pane",
-      splitPercentage: getSplitPercentage(
-        isCollapsed
-          ? LEFT_NAV_WIDTH
-          : userSplit
-          ? (parseFloat(userSplit) * window.innerWidth) / 100
-          : LEFT_NAV_WIDTH + DEFAULT_WIDTH
-      ),
+      splitPercentage: calculateValidSplit(getSplitPercentage(initialWidth)),
     } as AppMosaicParent,
     collapsed: isCollapsed,
   };
@@ -78,13 +95,13 @@ const HomeContent = () => {
   const isAnimating = useRef(false);
   const renderRef = useRef<RenderHandle>(null);
 
-  // useEffect(() => {
-  //   const fetchData = async () => {
-  //     const res = await apis.getTest();
-  //     console.log(res);
-  //   };
-  //   fetchData();
-  // }, []);
+  useEffect(() => {
+    const fetchData = async () => {
+      const res = await apis.getScene();
+      console.log(res);
+    };
+    fetchData();
+  }, []);
 
   const layoutRef = useRef(layout);
   useEffect(() => {
@@ -105,14 +122,25 @@ const HomeContent = () => {
 
   useEffect(() => {
     const handleResize = () => {
+      const viewportWidth = window.innerWidth;
+      const currentSplit = layoutRef.current.splitPercentage;
+
+      // 计算有效分割比例
+      const rightWidth = ((100 - currentSplit) / 100) * viewportWidth;
+      let newSplit = currentSplit;
+      if (rightWidth < SCENE_MIN_WIDTH) {
+        newSplit = Math.max(
+          0,
+          ((viewportWidth - SCENE_MIN_WIDTH) / viewportWidth) * 100
+        );
+      }
+
       setLayout(prev => ({
         ...prev,
-        splitPercentage: getSplitPercentage(
-          (prev.splitPercentage * window.innerWidth) / 100
-        ),
+        splitPercentage: newSplit,
       }));
 
-      // 确保在窗口大小变化时也更新场景尺寸
+      // 更新场景尺寸
       if (sceneManagerRef.current) {
         const container = document.getElementById("scene-container");
         if (container) {
@@ -196,16 +224,25 @@ const HomeContent = () => {
     if (isAnimating.current) return;
     if (newNode && typeof newNode !== "string") {
       const validNode = newNode as AppMosaicParent;
-      // 保存用户调整的比例（仅在侧边栏展开时）
-      if (!collapsed) {
-        localStorage.setItem(
-          USER_SPLIT_KEY,
-          validNode.splitPercentage.toString()
+      const viewportWidth = window.innerWidth;
+      let newSplit = validNode.splitPercentage;
+
+      // 强制右侧最小宽度
+      const rightWidth = ((100 - newSplit) / 100) * viewportWidth;
+      if (rightWidth < SCENE_MIN_WIDTH) {
+        newSplit = Math.max(
+          0,
+          ((viewportWidth - SCENE_MIN_WIDTH) / viewportWidth) * 100
         );
       }
+
+      if (!collapsed) {
+        localStorage.setItem(USER_SPLIT_KEY, newSplit.toString());
+      }
+
       setLayout({
         ...validNode,
-        splitPercentage: validNode.splitPercentage,
+        splitPercentage: newSplit,
       });
     }
   };

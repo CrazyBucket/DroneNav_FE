@@ -5,13 +5,13 @@ class Apis extends ApiBase {
     constructor() {
         super();
         this.urls = {
-            getTest: '/test'
+            getScene: '/getScene'
         };
     }
 
 
-    async getTest() {
-        const res = await this.service.get(this.urls.getTest!);
+    async getScene() {
+        const res = await this.service.get(this.urls.getScene!);
         return res.data;
     }
 }
