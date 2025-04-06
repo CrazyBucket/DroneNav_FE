@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@ant-design/icons": "^5.6.1",
+    "@react-three/drei": "^10.0.5",
     "@tailwindcss/forms": "^0.5.10",
     "@tailwindcss/typography": "^0.5.16",
     "@types/lodash-es": "^4.17.12",
@@ -29,6 +30,7 @@
     "react-mosaic-component": "^6.1.1",
     "react-router-dom": "^7.3.0",
     "three": "^0.173.0",
+    "three-stdlib": "^2.35.15",
     "zustand": "^5.0.3"
   },
   "devDependencies": {

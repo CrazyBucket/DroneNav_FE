@@ -9,6 +9,7 @@ import {
 import clsx from "clsx";
 import "./index.css";
 import { MIN_RIGHT_PANE_WIDTH } from "@/store/state";
+import Setting from "@/components/Setting";
 
 type FunctionArea = "views" | "settings" | "controls";
 
@@ -47,10 +48,10 @@ const Sidebar: React.FC<SidebarProps> = ({
 
   const renderContent = () => {
     return (
-      <div className="p-4 text-white/80">
-        {activeArea === "views" && "视图管理区域"}
-        {activeArea === "settings" && "系统设置区域"}
-        {activeArea === "controls" && "操作面板区域"}
+      <div className="text-white/80">
+        {activeArea === "views" && <div className="p-4">视图管理区域</div>}
+        {activeArea === "settings" && <Setting />}
+        {activeArea === "controls" && <div className="p-4">操作面板区域</div>}
       </div>
     );
   };
@@ -117,7 +118,7 @@ const Sidebar: React.FC<SidebarProps> = ({
           willChange: "width, opacity, margin",
         }}
       >
-        <div className="min-w-[360px] h-full flex flex-col">
+        <div className="min-w-[280px] h-full flex flex-col">
           <div className="h-12 border-b border-gray-600/50 flex items-center px-4 text-white/90 font-medium">
             {navButtons.find(btn => btn.key === activeArea)?.title}
           </div>

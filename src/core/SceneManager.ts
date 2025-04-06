@@ -108,9 +108,11 @@ export class SceneManager {
       75,
       this.container!.clientWidth / this.container!.clientHeight,
       0.1,
-      1000
+      5000 // 增大远截面距离以确保可以看到更远的对象
     );
-    camera.position.set(50, 50, 50);
+    // 调整相机位置，更好地观察场景中心
+    camera.position.set(30, 30, 30);
+    camera.lookAt(0, 0, 0); // 让相机看向场景中心
     return camera;
   }
 
@@ -174,6 +176,11 @@ export class SceneManager {
 
   public getObject<T extends THREE.Object3D>(id: string): T | null {
     return (this.objectMap.get(id)?.object as T) ?? null;
+  }
+
+  // 添加获取相机的方法
+  public getCamera(): THREE.PerspectiveCamera {
+    return this.camera;
   }
 
   public updateObject(
