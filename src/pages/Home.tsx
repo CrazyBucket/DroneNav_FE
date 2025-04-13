@@ -3,7 +3,6 @@ import { Mosaic, MosaicNode, MosaicParent } from "react-mosaic-component";
 import Navbar from "@components/layout/Navbar";
 import "react-mosaic-component/react-mosaic-component.css";
 import Sidebar from "@/components/layout/Sidebar";
-import { apis } from "@/services/api";
 import "./index.css";
 import { useScene, SceneProvider } from "../core/SceneContext";
 import { SceneManager } from "@/core/SceneManager";
@@ -96,12 +95,16 @@ const HomeContent = () => {
   const renderRef = useRef<RenderHandle>(null);
 
   useEffect(() => {
-    const fetchData = async () => {
-      const res = await apis.getScene();
-      console.log(res);
+    const manager = SceneManager.getInstance(containerRef.current!);
+    sceneManagerRef.current = manager;
+    const animateCube = () => {
+      requestAnimationFrame(animateCube);
     };
-    fetchData();
-  }, []);
+    animateCube();
+    return () => {
+      sceneManagerRef.current = null;
+    };
+  }, [containerRef]);
 
   const layoutRef = useRef(layout);
   useEffect(() => {
@@ -157,20 +160,6 @@ const HomeContent = () => {
     window.addEventListener("resize", handleResize);
     return () => window.removeEventListener("resize", handleResize);
   }, []);
-
-  useEffect(() => {
-    const manager = SceneManager.getInstance(containerRef.current!);
-    sceneManagerRef.current = manager;
-
-    const animateCube = () => {
-      requestAnimationFrame(animateCube);
-    };
-    animateCube();
-
-    return () => {
-      sceneManagerRef.current = null;
-    };
-  }, [containerRef]);
 
   // 保存布局
   useEffect(() => {

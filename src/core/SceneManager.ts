@@ -55,10 +55,10 @@ export class SceneManager {
     // 1. 优化地面设置
     const groundGeometry = new THREE.PlaneGeometry(1000, 1000);
     const groundMaterial = new THREE.MeshStandardMaterial({
-      color: 0x777777,  // 更浅的灰色
+      color: 0x777777, // 更浅的灰色
       roughness: 0.5,
       metalness: 0.2,
-      side: THREE.DoubleSide
+      side: THREE.DoubleSide,
     });
     const ground = new THREE.Mesh(groundGeometry, groundMaterial);
     ground.rotation.x = -Math.PI / 2;
@@ -72,19 +72,19 @@ export class SceneManager {
     // 3. 完全重写天空和太阳设置
     const sky = new Sky();
     sky.scale.setScalar(10000);
-    
+
     // 严格类型检查
-    if (sky.material && 'uniforms' in sky.material) {
+    if (sky.material && "uniforms" in sky.material) {
       const uniforms = (sky.material as THREE.ShaderMaterial).uniforms;
-    
+
       // 设置更明显的太阳效果
       const sunPosition = new THREE.Vector3(0.5, 0.8, -0.5).normalize();
-      uniforms['sunPosition']!.value = sunPosition;
-      uniforms['turbidity']!.value = 3;  // 更清晰的天空
-      uniforms['rayleigh']!.value = 1.2; // 适中的蓝色
-      uniforms['mieCoefficient']!.value = 0.005;
-      uniforms['mieDirectionalG']!.value = 0.95; // 更强的太阳光晕
-    
+      uniforms["sunPosition"]!.value = sunPosition;
+      uniforms["turbidity"]!.value = 3; // 更清晰的天空
+      uniforms["rayleigh"]!.value = 1.2; // 适中的蓝色
+      uniforms["mieCoefficient"]!.value = 0.005;
+      uniforms["mieDirectionalG"]!.value = 0.95; // 更强的太阳光晕
+
       // 添加更明亮的太阳光源
       const sunLight = new THREE.DirectionalLight(0xfff4e6, 2.0);
       sunLight.position.copy(sunPosition).multiplyScalar(100);
@@ -93,7 +93,7 @@ export class SceneManager {
       sunLight.shadow.mapSize.height = 2048;
       scene.add(sunLight);
     }
-    
+
     scene.add(sky);
 
     // 4. 增强环境光
@@ -153,6 +153,7 @@ export class SceneManager {
       id,
       selectable,
       version: 0,
+      type: object.type,
     };
 
     // LOD处理
@@ -244,6 +245,26 @@ export class SceneManager {
     return intersects[0]?.object || null;
   }
 
+  public getAllObjectsInfo() {
+    return Array.from(this.objectMap.values()).map(
+      ({ id, object, static: isStatic }) => ({
+        id,
+        type: object.userData.type || "unknown",
+        position: object.position.toArray(),
+        rotation: object.rotation
+          ? {
+              x: THREE.MathUtils.radToDeg(object.rotation.x),
+              y: THREE.MathUtils.radToDeg(object.rotation.y),
+              z: THREE.MathUtils.radToDeg(object.rotation.z),
+            }
+          : null,
+        metadata: object.userData.metadata || {},
+        static: isStatic,
+        scale: object.scale.toArray(),
+      })
+    );
+  }
+
   /* 交互事件处理 */
   private initEventListeners(): void {
     // 指针移动追踪
@@ -264,7 +285,6 @@ export class SceneManager {
       this.lastIntersection = this.getIntersections()[0] ?? null;
     });
   }
-
   /* 性能优化系统 */
   private markNeedsUpdate(): void {
     this.needsUpdate = true;

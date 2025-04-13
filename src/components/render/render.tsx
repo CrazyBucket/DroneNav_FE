@@ -5,6 +5,8 @@ import { DRACOLoader } from "three/examples/jsm/loaders/DRACOLoader.js";
 import { MeshoptDecoder } from "three/examples/jsm/libs/meshopt_decoder.module.js";
 import { SceneManager } from "@/core/SceneManager";
 import { useSettingStore } from "@/store/setting";
+import { loadScene } from "@/core/loadScene";
+import { apis } from "@/services/api";
 
 export type RenderHandle = {
   resize: (width: number, height: number) => void;
@@ -23,6 +25,15 @@ const Render = forwardRef<RenderHandle>((_, ref) => {
       sceneManagerRef.current?.resize(width, height);
     },
   }));
+
+  const InitScene = async () => {
+    const res = await apis.getScene();
+    console.log("API response:", res.scene.obstacles);
+    console.log("sceneManagerRef:", sceneManagerRef.current);
+    if (sceneManagerRef.current && res.scene.obstacles) {
+      await loadScene(res.scene.obstacles, sceneManagerRef.current);
+    }
+  };
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -43,7 +54,7 @@ const Render = forwardRef<RenderHandle>((_, ref) => {
     // 初始化 MeshoptDecoder
     loader.setMeshoptDecoder(MeshoptDecoder);
     loader.load(
-      "/models/drone_optimized.glb", // 使用优化后的无动画模型，性能更好
+      "/models/drone_optimized.glb",
       gltf => {
         const drone = gltf.scene;
 
@@ -124,6 +135,7 @@ const Render = forwardRef<RenderHandle>((_, ref) => {
       }
     );
 
+    InitScene();
     return () => {
       manager.removeObject("drone-model");
       manager.removeObject("debug-sphere");
