@@ -12,7 +12,7 @@ import {
   MIN_PANE_WIDTH,
   SCENE_MIN_WIDTH,
 } from "@/store/state";
-import Render, { RenderHandle } from "@/components/render/render";
+import Render, { RenderHandle } from "@/components/Render/Render";
 
 type ViewId = "left-pane" | "right-pane";
 const USER_SPLIT_KEY = "user-split-percentage";

@@ -40,6 +40,14 @@ export async function createTree(obstacle: TreeObstacle): Promise<THREE.Group> {
       THREE.MathUtils.degToRad(rotation.roll)
     );
   }
+  tree.updateMatrixWorld(true);
+  const boundingBox = new THREE.Box3().setFromObject(tree);
+  const actualSize = new THREE.Vector3();
+  boundingBox.getSize(actualSize);
+
+  // 将尺寸存储在 userData 中方便后续使用
+  tree.userData.originalSize = actualSize;
+  console.log(`模型实际尺寸: ${actualSize.x}x${actualSize.y}x${actualSize.z}`);
 
   return tree;
 }

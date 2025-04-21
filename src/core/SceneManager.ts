@@ -52,17 +52,29 @@ export class SceneManager {
   private initScene(): THREE.Scene {
     const scene = new THREE.Scene();
 
-    // 1. 优化地面设置
-    const groundGeometry = new THREE.PlaneGeometry(1000, 1000);
+    const textureLoader = new THREE.TextureLoader();
+    const groundTexture = textureLoader.load("/texture/ground/ground.jpg");
+    groundTexture.wrapS = THREE.RepeatWrapping;
+    groundTexture.wrapT = THREE.RepeatWrapping;
+    groundTexture.repeat.set(20, 20);
+    groundTexture.anisotropy = 16;
+    const normalTexture = textureLoader.load("/textures/ground/normal.jpg");
+    normalTexture.wrapS = THREE.RepeatWrapping;
+    normalTexture.wrapT = THREE.RepeatWrapping;
+    normalTexture.repeat.copy(groundTexture.repeat);
     const groundMaterial = new THREE.MeshStandardMaterial({
-      color: 0x777777, // 更浅的灰色
-      roughness: 0.5,
-      metalness: 0.2,
+      map: groundTexture,
+      normalMap: normalTexture,
+      roughness: 0.8,
+      metalness: 0.05,
       side: THREE.DoubleSide,
     });
+    const groundGeometry = new THREE.PlaneGeometry(1000, 1000, 100, 100);
     const ground = new THREE.Mesh(groundGeometry, groundMaterial);
     ground.rotation.x = -Math.PI / 2;
     ground.receiveShadow = true;
+    ground.position.y -= 0.1;
+
     scene.add(ground);
 
     // 2. 优化网格辅助线
@@ -83,7 +95,7 @@ export class SceneManager {
       uniforms["turbidity"]!.value = 3; // 更清晰的天空
       uniforms["rayleigh"]!.value = 1.2; // 适中的蓝色
       uniforms["mieCoefficient"]!.value = 0.005;
-      uniforms["mieDirectionalG"]!.value = 0.95; // 更强的太阳光晕
+      uniforms["mieDirectionalG"]!.value = 0.7; // 更强的太阳光晕
 
       // 添加更明亮的太阳光源
       const sunLight = new THREE.DirectionalLight(0xfff4e6, 2.0);
@@ -97,8 +109,21 @@ export class SceneManager {
     scene.add(sky);
 
     // 4. 增强环境光
-    const ambientLight = new THREE.AmbientLight(0x404040, 0.6);
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
     scene.add(ambientLight);
+
+    // 调整方向光参数
+    const sunLight = new THREE.DirectionalLight(0xfff0e6, 1.0); // 提升光照强度
+    sunLight.position.set(50, 100, 50); // 提高光源高度
+    sunLight.shadow.camera.far = 500; // 扩展阴影计算范围
+    scene.add(sunLight);
+
+    const hemisphereLight = new THREE.HemisphereLight(
+      0xffffbb, // 天空颜色
+      0x080820, // 地面颜色
+      0.8 // 强度
+    );
+    scene.add(hemisphereLight);
 
     return scene;
   }

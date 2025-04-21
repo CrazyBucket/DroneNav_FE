@@ -90,10 +90,6 @@ const Render = forwardRef<RenderHandle>((_, ref) => {
           object: drone,
           selectable: true,
         });
-
-        console.log("模型已添加到场景");
-
-        // 添加辅助调试物体
         // 添加辅助调试物体
         const sphere = new THREE.Mesh(
           new THREE.SphereGeometry(5, 16, 16),
@@ -107,7 +103,6 @@ const Render = forwardRef<RenderHandle>((_, ref) => {
           object: sphere,
           selectable: false,
         });
-        // 添加坐标轴辅助对象
         // 添加坐标轴辅助对象
         const axesHelper = new THREE.AxesHelper(20);
         axesHelperRef.current = axesHelper;
