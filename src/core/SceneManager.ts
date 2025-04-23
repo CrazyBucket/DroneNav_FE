@@ -4,7 +4,6 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { Sky } from "three/examples/jsm/objects/Sky.js";
 
-// 在类定义前添加类型声明
 type EventType = "click" | "doubleclick" | "hover" | "select";
 type EventHandler<T = unknown> = (data: T) => void;
 
@@ -52,16 +51,20 @@ export class SceneManager {
   private initScene(): THREE.Scene {
     const scene = new THREE.Scene();
 
+    const GROUND_SIZE = 100; // 单位：米
+    const TEXTURE_REPEAT = 20 * 10; // 纹理重复次数增加10倍
     const textureLoader = new THREE.TextureLoader();
     const groundTexture = textureLoader.load("/texture/ground/ground.jpg");
     groundTexture.wrapS = THREE.RepeatWrapping;
     groundTexture.wrapT = THREE.RepeatWrapping;
-    groundTexture.repeat.set(20, 20);
+    groundTexture.repeat.set(TEXTURE_REPEAT, TEXTURE_REPEAT); // 修改2：增加纹理重复密度
     groundTexture.anisotropy = 16;
+
+    // 法线贴图设置
     const normalTexture = textureLoader.load("/textures/ground/normal.jpg");
     normalTexture.wrapS = THREE.RepeatWrapping;
     normalTexture.wrapT = THREE.RepeatWrapping;
-    normalTexture.repeat.copy(groundTexture.repeat);
+    normalTexture.repeat.set(TEXTURE_REPEAT, TEXTURE_REPEAT);
     const groundMaterial = new THREE.MeshStandardMaterial({
       map: groundTexture,
       normalMap: normalTexture,
@@ -77,13 +80,11 @@ export class SceneManager {
 
     scene.add(ground);
 
-    // 2. 优化网格辅助线
-    const gridHelper = new THREE.GridHelper(1000, 50, 0xaaaaaa, 0x666666);
+    const gridHelper = new THREE.GridHelper(100, 50, 0xaaaaaa, 0x666666);
     scene.add(gridHelper);
 
-    // 3. 完全重写天空和太阳设置
     const sky = new Sky();
-    sky.scale.setScalar(10000);
+    sky.scale.setScalar(1000);
 
     // 严格类型检查
     if (sky.material && "uniforms" in sky.material) {
@@ -108,23 +109,21 @@ export class SceneManager {
 
     scene.add(sky);
 
-    // 4. 增强环境光
     const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
     scene.add(ambientLight);
 
     // 调整方向光参数
-    const sunLight = new THREE.DirectionalLight(0xfff0e6, 1.0); // 提升光照强度
-    sunLight.position.set(50, 100, 50); // 提高光源高度
-    sunLight.shadow.camera.far = 500; // 扩展阴影计算范围
+    const sunLight = new THREE.DirectionalLight(0xfff0e6, 1.0);
+    sunLight.position.set(50, 100, 50);
+    sunLight.shadow.camera.far = 500;
     scene.add(sunLight);
 
     const hemisphereLight = new THREE.HemisphereLight(
       0xffffbb, // 天空颜色
       0x080820, // 地面颜色
-      0.8 // 强度
+      0.5 // 强度
     );
     scene.add(hemisphereLight);
-
     return scene;
   }
 
@@ -133,10 +132,10 @@ export class SceneManager {
       75,
       this.container!.clientWidth / this.container!.clientHeight,
       0.1,
-      5000 // 增大远截面距离以确保可以看到更远的对象
+      500 // 增大远截面距离以确保可以看到更远的对象
     );
     // 调整相机位置，更好地观察场景中心
-    camera.position.set(30, 30, 30);
+    camera.position.set(3, 3, 3);
     camera.lookAt(0, 0, 0); // 让相机看向场景中心
     return camera;
   }

@@ -28,7 +28,7 @@ export async function createBuilding(
       // 配置贴图重复模式
       wallTexture.wrapS = THREE.RepeatWrapping;
       wallTexture.wrapT = THREE.RepeatWrapping;
-      const textureScale = 20; // 贴图每重复单元的尺寸（单位：米）
+      const textureScale = 4; // 贴图每重复单元的尺寸（单位：米）
       wallTexture.repeat.set(
         length / textureScale, // X轴方向重复次数 = 建筑长度 / 贴图单元尺寸
         height / textureScale // Y轴方向重复次数 = 建筑高度 / 贴图单元尺寸

@@ -78,10 +78,10 @@ const Render = forwardRef<RenderHandle>((_, ref) => {
             child.receiveShadow = true;
           }
         });
-
+        const scale = 2;
         // 调整模型显示 - 增加比例并设置位置
-        drone.scale.set(10.0, 10.0, 10.0);
-        drone.position.set(0, 15, 0);
+        drone.scale.set(scale, scale, scale);
+        drone.position.set(0, 3, 0);
         drone.rotation.y = Math.PI / 2;
 
         // 添加模型到场景
@@ -89,19 +89,6 @@ const Render = forwardRef<RenderHandle>((_, ref) => {
           id: "drone-model",
           object: drone,
           selectable: true,
-        });
-        // 添加辅助调试物体
-        const sphere = new THREE.Mesh(
-          new THREE.SphereGeometry(5, 16, 16),
-          new THREE.MeshBasicMaterial({ color: 0xff0000, wireframe: true })
-        );
-        sphere.position.set(0, 15, 0); // 与无人机同一位置
-        debugSphereRef.current = sphere;
-        sphere.visible = showDebugView; // 根据设置初始化可见性
-        manager.addObject({
-          id: "debug-sphere",
-          object: sphere,
-          selectable: false,
         });
         // 添加坐标轴辅助对象
         const axesHelper = new THREE.AxesHelper(20);
@@ -112,12 +99,6 @@ const Render = forwardRef<RenderHandle>((_, ref) => {
           object: axesHelper,
           selectable: false,
         });
-        // 调整相机位置以确保更好地观察模型
-        const camera = manager.getCamera();
-        if (camera) {
-          camera.position.set(20, 30, 20);
-          camera.lookAt(0, 15, 0); // 看向无人机的位置
-        }
       },
       xhr => {
         // 可以在这里添加加载进度处理
