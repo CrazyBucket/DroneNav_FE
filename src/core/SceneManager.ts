@@ -36,6 +36,7 @@ export class SceneManager {
 
   private pointerCoords = new THREE.Vector2();
   private lastIntersection: THREE.Intersection | null = null;
+  private markerMap = new Map<string, THREE.Object3D>();
 
   private constructor(private container: HTMLDivElement) {
     this.scene = this.initScene();
@@ -404,5 +405,37 @@ export class SceneManager {
       SceneManager.instance = new SceneManager(container);
     }
     return SceneManager.instance;
+  }
+  // 添加标记点方法
+  public addMarker(position: THREE.Vector3, id: string = "target-point") {
+    this.removeMarker(id); // 先清理旧标记
+
+    // 创建发光球体
+    const geometry = new THREE.SphereGeometry(0.1, 32, 32);
+    const material = new THREE.MeshPhongMaterial({
+      color: 0xff0000,
+      emissive: 0xff4444,
+      emissiveIntensity: 0.8,
+    });
+    const sphere = new THREE.Mesh(geometry, material);
+    sphere.position.copy(position);
+    sphere.castShadow = true;
+
+    // 添加标记到场景
+    this.addObject({
+      id,
+      object: sphere,
+      selectable: true,
+    });
+    this.markerMap.set(id, sphere);
+  }
+
+  // 移除标记点
+  public removeMarker(id: string) {
+    if (this.markerMap.has(id)) {
+      this.removeObject(id);
+      this.animationCallbacks.delete(id);
+      this.markerMap.delete(id);
+    }
   }
 }

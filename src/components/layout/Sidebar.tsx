@@ -10,6 +10,7 @@ import clsx from "clsx";
 import "./index.css";
 import { MIN_RIGHT_PANE_WIDTH } from "@/store/state";
 import Setting from "@/components/Setting";
+import Operations from "@/components/Operations";
 
 type FunctionArea = "views" | "settings" | "controls";
 
@@ -51,7 +52,7 @@ const Sidebar: React.FC<SidebarProps> = ({
       <div className="text-white/80">
         {activeArea === "views" && <div className="p-4">视图管理区域</div>}
         {activeArea === "settings" && <Setting />}
-        {activeArea === "controls" && <div className="p-4">操作面板区域</div>}
+        {activeArea === "controls" && <Operations />}
       </div>
     );
   };

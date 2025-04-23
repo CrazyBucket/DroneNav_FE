@@ -1,4 +1,4 @@
-import { ConfigProvider } from "antd";
+import { ConfigProvider, theme } from "antd";
 import "./index.css";
 import Home from "./pages/Home";
 
@@ -6,9 +6,21 @@ function App() {
   return (
     <ConfigProvider
       theme={{
+        algorithm: theme.darkAlgorithm,
         token: {
-          colorPrimary: "#2F3D2C",
-          colorInfo: "#1890ff",
+          colorPrimary: "#11482a",
+          colorBgContainer: "#1A2F1A",
+          colorBorder: "#2D4A2D",
+          colorText: "#E5FFE5",
+          colorTextBase: "#E5FFE5",
+        },
+        components: {
+          InputNumber: {
+            colorBgContainer: "#1A2F1A",
+            colorBorder: "#2D4A2D",
+            hoverBorderColor: "#3CB371",
+            activeBorderColor: "#4DD18D",
+          },
         },
       }}
     >
