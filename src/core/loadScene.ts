@@ -8,9 +8,9 @@ import { initFactories } from "./factories/InitFactories";
 // 坐标系转换器
 const coordinateTransformer = {
   ENU: (pos: { x: number; y: number; z: number }) =>
-    new THREE.Vector3(pos.x, pos.y, pos.z),
+    new THREE.Vector3(pos.x, pos.z, pos.y), // Z轴对应垂直方向
   NED: (pos: { x: number; y: number; z: number }) =>
-    new THREE.Vector3(pos.x, -pos.z, pos.y),
+    new THREE.Vector3(pos.x, pos.z, -pos.y), // 保持Y轴为垂直方向
 };
 
 // 智能对象分类器
@@ -47,6 +47,7 @@ export async function loadScene(
         id: obstacle.id,
         object: await obj,
         static: objectClassifier.isStatic(obstacle.type),
+        collidable: true,
       });
     });
 

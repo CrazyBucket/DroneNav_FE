@@ -1,10 +1,11 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { InputNumber, Button, Form, Divider, Typography } from "antd";
+import { InputNumber, Button, Form, Divider, Typography, message } from "antd";
 import { SettingItem } from "@/types/settingItem";
 import { ControlOutlined } from "@ant-design/icons";
 import { SceneManager } from "@/core/SceneManager";
 import { Vector3 } from "three";
 import { debounce } from "lodash-es";
+import { apis } from "@/services/api";
 
 interface CoordinateValue {
   x: number;
@@ -59,7 +60,7 @@ const CoordinateInput: React.FC<{
       <div className="flex items-center flex-1">
         <span className="text-sm text-white mr-2 w-6">Z:</span>
         <InputNumber
-          min={-Infinity}
+          min={0}
           max={Infinity}
           value={value.z}
           onChange={handleChange("z")}
@@ -79,22 +80,31 @@ const useOperations = () => {
     y: 0,
     z: 0,
   });
-
+  const [isReachable, setIsReachable] = useState(false);
   const debounceRef = useRef<{
     updateSceneMarker: (coords: CoordinateValue) => void;
   }>();
-
-  // 坐标转换方法
+  const lastPositionRef = useRef<CoordinateValue>({ x: 0, y: 0, z: 0 });
   const convertCoordinates = useCallback((coords: CoordinateValue) => {
     return new Vector3(coords.x, coords.z, -coords.y);
   }, []);
+
   const updateSceneMarker = useCallback(
     (coords: CoordinateValue) => {
       const sceneManager = SceneManager.getInstance();
-      sceneManager?.addMarker(convertCoordinates(coords), "user-input-marker");
+      if (!sceneManager) return;
+
+      const threePosition = convertCoordinates(coords);
+      const reachable = sceneManager.addMarker(
+        threePosition,
+        "user-input-marker"
+      );
+      setIsReachable(reachable);
+      lastPositionRef.current = coords;
     },
     [convertCoordinates]
   );
+
   const handleCoordinateChange = useCallback((newValue: CoordinateValue) => {
     setCoordinates(newValue);
     debounceRef.current?.updateSceneMarker(newValue);
@@ -106,14 +116,23 @@ const useOperations = () => {
     };
 
     return () => {
-      debouncedUpdate.cancel(); // 清理防抖
+      debouncedUpdate.cancel();
     };
   }, [updateSceneMarker]);
 
-  const handleSubmit = () => {
-    console.log("当前坐标值：", coordinates);
-    // 提交逻辑
-  };
+  const handleSubmit = useCallback(async () => {
+    if (!isReachable) {
+      message.error("当前位置不可达，无法提交");
+      return;
+    }
+
+    try {
+      const response = await apis.startSimulation(lastPositionRef.current);
+      message.success(response.message);
+    } catch (error) {
+      message.error("提交坐标失败，请重试");
+    }
+  }, [isReachable]);
 
   const operations: SettingItem[] = [
     {

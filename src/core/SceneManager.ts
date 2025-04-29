@@ -13,6 +13,7 @@ interface SceneObjectParams {
   selectable?: boolean;
   static?: boolean;
   lodLevels?: [number, THREE.Object3D][];
+  collidable?: boolean;
 }
 
 export class SceneManager {
@@ -73,7 +74,12 @@ export class SceneManager {
       metalness: 0.05,
       side: THREE.DoubleSide,
     });
-    const groundGeometry = new THREE.PlaneGeometry(1000, 1000, 100, 100);
+    const groundGeometry = new THREE.PlaneGeometry(
+      GROUND_SIZE,
+      GROUND_SIZE,
+      100,
+      100
+    );
     const ground = new THREE.Mesh(groundGeometry, groundMaterial);
     ground.rotation.x = -Math.PI / 2;
     ground.receiveShadow = true;
@@ -406,30 +412,83 @@ export class SceneManager {
     }
     return SceneManager.instance;
   }
-  // 添加标记点方法
-  public addMarker(position: THREE.Vector3, id: string = "target-point") {
-    this.removeMarker(id); // 先清理旧标记
+  public checkCollision(
+    position: THREE.Vector3,
+    radius: number = 0.01 // 大幅缩小检测半径
+  ): boolean {
+    // 添加安全平面过滤
+    if (position.y < 0.01) return true; // 地面碰撞判断
 
-    // 创建发光球体
-    const geometry = new THREE.SphereGeometry(0.1, 32, 32);
-    const material = new THREE.MeshPhongMaterial({
-      color: 0xff0000,
-      emissive: 0xff4444,
-      emissiveIntensity: 0.8,
+    const sphere = new THREE.Sphere(position, radius);
+
+    return Array.from(this.objectMap.values()).some(params => {
+      // 严格过滤条件
+      if (
+        !params.collidable ||
+        params.object.userData.isDecorative // 装饰性物体
+      )
+        return false;
+
+      // 精确计算物体实际尺寸
+      const box = new THREE.Box3().setFromObject(params.object);
+      const size = box.getSize(new THREE.Vector3());
+
+      // 忽略微观尺寸物体
+      if (size.length() < 0.1) return false;
+
+      return box.intersectsSphere(sphere);
     });
+  }
+  public isPositionReachable(position: THREE.Vector3): boolean {
+    // 实现你的碰撞检测逻辑
+    const collisionRadius = 0.5; // 检测半径
+    return !this.checkCollision(position, collisionRadius);
+  }
+
+  // 修改后的标记点添加方法
+  public addMarker(
+    position: THREE.Vector3,
+    id: string = "target-point"
+  ): boolean {
+    this.removeMarker(id);
+
+    // 创建标记点
+    const geometry = new THREE.SphereGeometry(0.1, 32, 32);
+
+    // 根据可达性设置颜色
+    const isReachable = this.isPositionReachable(position);
+    const material = new THREE.MeshPhongMaterial({
+      color: isReachable ? 0x00ff00 : 0xff0000,
+      emissive: isReachable ? 0x00ff00 : 0xff0000,
+      emissiveIntensity: 0.8,
+      transparent: true,
+      opacity: 0.8,
+    });
+
     const sphere = new THREE.Mesh(geometry, material);
     sphere.position.copy(position);
     sphere.castShadow = true;
 
-    // 添加标记到场景
+    // 添加脉冲动画
+    this.animationCallbacks.set(id, (time: number) => {
+      sphere.scale.setScalar(1 + Math.sin(time * 5) * 0.1);
+    });
+
     this.addObject({
       id,
       object: sphere,
       selectable: true,
+      collidable: false,
     });
+
     this.markerMap.set(id, sphere);
+    return isReachable;
   }
 
+  // 新增获取当前可达状态的方法
+  public getCurrentMarkerStatus(position: THREE.Vector3): boolean {
+    return this.isPositionReachable(position);
+  }
   // 移除标记点
   public removeMarker(id: string) {
     if (this.markerMap.has(id)) {
@@ -437,5 +496,16 @@ export class SceneManager {
       this.animationCallbacks.delete(id);
       this.markerMap.delete(id);
     }
+  }
+  public listCollidableObjects(): void {
+    console.log("可碰撞物体列表：");
+    Array.from(this.objectMap.values()).forEach(params => {
+      if (params.collidable) {
+        const pos = params.object.position;
+        console.log(
+          `ID: ${params.id} | 类型: ${params.object.type} | 位置: (${pos.x}, ${pos.y}, ${pos.z})`
+        );
+      }
+    });
   }
 }
