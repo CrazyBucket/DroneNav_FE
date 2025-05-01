@@ -41,6 +41,7 @@ const Render = forwardRef<RenderHandle>((_, ref) => {
     if (!containerRef.current) return;
 
     const manager = SceneManager.getInstance(containerRef.current);
+    if (manager.getObject("drone-model")) return;
     sceneManagerRef.current = manager;
 
     // 创建 GLTFLoader 并设置解码器
@@ -83,11 +84,12 @@ const Render = forwardRef<RenderHandle>((_, ref) => {
         const scale = 2;
         // 调整模型显示 - 增加比例并设置位置
         drone.scale.set(scale, scale, scale);
-        const initialPosition = { x: 0, y: 3, z: 0 };
+        const initialPosition = { x: 0, y: 0, z: 3 };
+
         drone.position.set(
           initialPosition.x,
-          initialPosition.y,
-          initialPosition.z
+          initialPosition.z,
+          initialPosition.y
         );
         setCurrentCoordinate(initialPosition);
         drone.rotation.y = Math.PI / 2;

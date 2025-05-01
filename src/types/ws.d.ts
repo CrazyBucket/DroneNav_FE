@@ -20,13 +20,6 @@ export interface TrajectoryProgress {
   distance: number;
 }
 
-export interface DroneInitData {
-  current_position: DronePosition;
-  target: DronePosition;
-  speed: number;
-  obstacles?: Obstacle[];
-}
-
 export interface Obstacle {
   position: [number, number, number];
   dimensions: [number, number, number];
@@ -40,16 +33,18 @@ export interface WebSocketError {
 }
 
 export type WebSocketEvent = keyof WebSocketEventMap;
-
 export interface WebSocketEventMap {
+  // 系统级事件
   connected: {
     timestamp: string;
-    taskId: string;
+    task_id: string;
   };
   disconnected: {
     timestamp: string;
     reason?: string;
   };
+
+  // 业务级事件
   position_update: {
     sequence: number;
     timestamp: string;
@@ -58,7 +53,7 @@ export interface WebSocketEventMap {
   };
   mission_complete: {
     timestamp: string;
-    finalPosition: { x: number; y: number; z: number };
+    final_position: { x: number; y: number; z: number };
   };
   error: {
     code: string;

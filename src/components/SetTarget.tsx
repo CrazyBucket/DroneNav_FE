@@ -1,6 +1,6 @@
-import React, { useCallback, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { InputNumber, Button, message } from "antd";
-import { Vector3 } from "three";
+import * as THREE from "three";
 import { debounce } from "lodash-es";
 import { SceneManager } from "@/core/SceneManager";
 import { apis } from "@/services/api";
@@ -83,21 +83,64 @@ export const SetTarget: React.FC = () => {
   const [isReachable, setIsReachable] = useState(false);
   const lastPositionRef = React.useRef<CoordinateValue>({ x: 0, y: 0, z: 0 });
   const { currentCoordinate } = useCoordinatesStore();
-
+  const [flightPath, setFlightPath] = useState<THREE.Vector3[]>([]);
+  const [isFlying, setIsFlying] = useState(false);
+  const wsRef = useRef<DroneWebSocket | null>(null);
+  const scene = SceneManager.getInstance();
   const convertCoordinates = useCallback((coords: CoordinateValue) => {
-    return new Vector3(coords.x, coords.z, -coords.y);
+    return new THREE.Vector3(coords.x, coords.z, coords.y);
   }, []);
+
+  const renderTrajectory = useCallback((path: THREE.Vector3[]) => {
+    scene.removeObject("flight-trajectory"); // 清理旧路径
+
+    const geometry = new THREE.BufferGeometry().setFromPoints(path);
+    const material = new THREE.LineDashedMaterial({
+      color: 0x00ff00,
+      dashSize: 0.5,
+      gapSize: 0.2,
+    });
+
+    const line = new THREE.Line(geometry, material);
+    line.computeLineDistances();
+
+    scene.addObject({
+      id: "flight-trajectory",
+      object: line,
+      selectable: false,
+      static: true,
+    });
+  }, []);
+
+  const handlePositionUpdate = useCallback(
+    (data: any) => {
+      console.log("收到位置更新:", data); // 添加调试日志
+      const targetPos = convertCoordinates(data.coordinates);
+      console.log("转换后坐标:", targetPos); // 确认坐标转换正确
+
+      // 更新无人机位置
+      scene.smartAnimate("drone-model", targetPos, {
+        duration: 0.5,
+        lookAtTarget: true,
+        addToQueue: true,
+      });
+
+      // 更新轨迹路径
+      setFlightPath(prev => {
+        const newPath = [...prev, targetPos];
+        if (newPath.length > 1) renderTrajectory(newPath);
+        return newPath;
+      });
+    },
+    [convertCoordinates, renderTrajectory]
+  );
 
   const updateSceneMarker = useCallback(
     (coords: CoordinateValue) => {
-      const sceneManager = SceneManager.getInstance();
-      if (!sceneManager) return;
+      if (!scene) return;
 
       const threePosition = convertCoordinates(coords);
-      const reachable = sceneManager.addMarker(
-        threePosition,
-        "user-input-marker"
-      );
+      const reachable = scene.addMarker(threePosition, "user-input-marker");
       setIsReachable(reachable);
       lastPositionRef.current = coords;
     },
@@ -112,54 +155,54 @@ export const SetTarget: React.FC = () => {
     [updateSceneMarker]
   );
 
-  const handleSubmit = useCallback(async (): Promise<() => void> => {
+  const handleSubmit = useCallback(async () => {
     if (!isReachable) {
       message.error("当前位置不可达，无法提交");
-      return () => {};
+      return;
     }
+
     try {
-      if (currentCoordinate) {
-        try {
-          const { ws_endpoint } = await apis.startSimulation({
-            current: currentCoordinate,
-            target: lastPositionRef.current,
-          });
+      setIsFlying(true);
+      const { ws_endpoint } = await apis.startSimulation({
+        current: currentCoordinate!,
+        target: lastPositionRef.current,
+      });
 
-          const ws = new DroneWebSocket({
-            url: `ws://localhost:8000${ws_endpoint}`,
-          });
+      // 初始化WebSocket
+      wsRef.current = new DroneWebSocket({
+        url: `ws://localhost:8000${ws_endpoint}`,
+      });
 
-          ws.connect();
-          // 订阅关键事件
-          ws.subscribe("connected", data => {
-            console.log("连接成功，任务ID:", data.taskId);
-            message.success("仿真任务已开始");
-          });
+      // 事件订阅
+      wsRef.current.subscribe("position_update", handlePositionUpdate);
+      wsRef.current.subscribe("mission_complete", () => {
+        message.success("路径规划完成");
+        setIsFlying(false);
+      });
 
-          const cleanup = ws.subscribe("position_update", data => {
-            console.log("位置更新:", data);
-            // 更新前端状态或动画...
-          });
+      wsRef.current.connect();
 
-          ws.subscribe("error", err => {
-            message.error(`发生错误: ${err.message}`);
-          });
-
-          return () => {
-            cleanup();
-            ws.disconnect();
-          };
-        } catch (error) {
-          message.error("提交坐标失败，请重试");
-          return () => {};
-        }
-      }
-      return () => {};
-    } catch (error) {
-      message.error("提交坐标失败，请重试");
-      return () => {};
+      // 初始化轨迹
+      const initialPos = convertCoordinates(currentCoordinate!);
+      const drone = scene.getObject("drone-model");
+      setFlightPath([initialPos]);
+    } catch (err) {
+      message.error("任务启动失败: " + (err as Error).message);
+      setIsFlying(false);
     }
-  }, [isReachable]);
+  }, [
+    isReachable,
+    currentCoordinate,
+    handlePositionUpdate,
+    convertCoordinates,
+  ]);
+
+  useEffect(() => {
+    return () => {
+      wsRef.current?.disconnect();
+      SceneManager.getInstance().removeObject("flight-trajectory");
+    };
+  }, []);
 
   return (
     <div className="flex flex-col gap-4">

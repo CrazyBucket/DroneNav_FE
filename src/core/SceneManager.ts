@@ -38,6 +38,14 @@ export class SceneManager {
   private pointerCoords = new THREE.Vector2();
   private lastIntersection: THREE.Intersection | null = null;
   private markerMap = new Map<string, THREE.Object3D>();
+  private clock = new THREE.Clock();
+  private animations = new Map<
+    string,
+    {
+      update: (deltaTime: number) => boolean;
+      onComplete?: () => void;
+    }
+  >();
 
   private constructor(private container: HTMLDivElement) {
     this.scene = this.initScene();
@@ -178,7 +186,9 @@ export class SceneManager {
   /* 核心逻辑 */
   public addObject(params: SceneObjectParams): void {
     const { id, object, selectable = true, static: isStatic = false } = params;
-
+    if (this.objectMap.has(id)) {
+      this.removeObject(id);
+    }
     // 注入元数据
     object.userData = {
       id,
@@ -336,7 +346,13 @@ export class SceneManager {
 
   private tick = (): void => {
     requestAnimationFrame(this.tick);
-
+    const deltaTime = this.clock.getDelta();
+    this.animations.forEach((animation, key) => {
+      const shouldContinue = animation.update(deltaTime);
+      if (!shouldContinue) {
+        this.animations.delete(key);
+      }
+    });
     // 按需更新静态对象
     this.staticObjects.forEach(id => {
       const obj = this.objectMap.get(id)?.object;
@@ -351,6 +367,186 @@ export class SceneManager {
   };
 
   private eventHandlers = new Map<EventType, Set<EventHandler>>();
+
+  /**
+   * 设置物体位置
+   * @param id 物体ID
+   * @param position 三维坐标
+   */
+  public setObjectPosition(id: string, position: THREE.Vector3): void {
+    this.updateObject(id, obj => {
+      obj.position.copy(position);
+    });
+  }
+
+  /**
+   * 平滑移动物体到指定位置
+   * @param id 物体ID
+   * @param targetPosition 目标位置
+   * @param duration 移动时长（秒）
+   */
+  public animateToPosition(
+    id: string,
+    targetPosition: THREE.Vector3,
+    duration: number = 1
+  ): Promise<void> {
+    return new Promise(resolve => {
+      const obj = this.getObject(id);
+      if (!obj) {
+        console.warn(`Object ${id} not found`);
+        return resolve();
+      }
+
+      const startPosition = obj.position.clone();
+      const startTime = this.clock.getElapsedTime();
+
+      const animationKey = `move_${id}_${Date.now()}`;
+
+      this.animations.set(animationKey, {
+        update: (deltaTime: number) => {
+          const elapsed = this.clock.getElapsedTime() - startTime;
+          const progress = Math.min(elapsed / duration, 1);
+
+          obj.position.lerpVectors(startPosition, targetPosition, progress);
+
+          if (progress >= 1) {
+            this.animations.delete(animationKey);
+            resolve();
+            return false;
+          }
+          return true;
+        },
+        onComplete: resolve,
+      });
+    });
+  }
+
+  /**
+   * 设置物体旋转（欧拉角）
+   * @param id 物体ID
+   * @param rotation 三维旋转角度（弧度）
+   */
+  public setObjectRotation(id: string, rotation: THREE.Euler): void {
+    this.updateObject(id, obj => {
+      obj.rotation.copy(rotation);
+    });
+  }
+
+  /**
+   * 设置物体缩放
+   * @param id 物体ID
+   * @param scale 三维缩放比例
+   */
+  public setObjectScale(id: string, scale: THREE.Vector3): void {
+    this.updateObject(id, obj => {
+      obj.scale.copy(scale);
+    });
+  }
+
+  // 在SceneManager类中添加以下扩展
+  private flightQueue: THREE.Vector3[] = [];
+  private isAnimating = false;
+
+  /**
+   * 增强版动画方法 - 支持连续路径
+   * @param id 物体ID
+   * @param target 目标位置
+   * @param options 配置参数
+   */
+  public async smartAnimate(
+    id: string,
+    target: THREE.Vector3,
+    options: {
+      duration?: number;
+      lookAtTarget?: boolean;
+      addToQueue?: boolean;
+    } = {}
+  ): Promise<void> {
+    const { duration = 1, lookAtTarget = true, addToQueue = false } = options;
+    const obj = this.getObject(id);
+    if (!obj) return;
+
+    if (addToQueue) {
+      this.flightQueue.push(target);
+      if (!this.isAnimating) this.processQueue(id);
+      return;
+    }
+
+    this.isAnimating = true;
+
+    // 方向控制
+    if (lookAtTarget) {
+      const startRotation = obj.rotation.clone();
+      const targetRotation = this.calculateLookAt(obj.position, target);
+      this.animateRotation(id, startRotation, targetRotation, duration / 2);
+    }
+
+    await this.animateToPosition(id, target, duration);
+    this.isAnimating = false;
+  }
+
+  /**
+   * 处理飞行队列
+   */
+  private async processQueue(id: string) {
+    while (this.flightQueue.length > 0) {
+      const target = this.flightQueue.shift()!;
+      await this.smartAnimate(id, target, { lookAtTarget: true });
+    }
+  }
+
+  /**
+   * 计算朝向目标的角度
+   */
+  private calculateLookAt(
+    current: THREE.Vector3,
+    target: THREE.Vector3
+  ): THREE.Euler {
+    const direction = new THREE.Vector3()
+      .subVectors(target, current)
+      .normalize();
+    return new THREE.Euler(
+      0, // 保持X轴水平
+      Math.atan2(direction.x, direction.z), // Y轴旋转
+      0
+    );
+  }
+
+  /**
+   * 旋转动画方法
+   */
+  private animateRotation(
+    id: string,
+    start: THREE.Euler,
+    end: THREE.Euler,
+    duration: number
+  ): Promise<void> {
+    return new Promise(resolve => {
+      const animationKey = `rotate_${id}_${Date.now()}`;
+      const startTime = this.clock.getElapsedTime();
+
+      this.animations.set(animationKey, {
+        update: () => {
+          const elapsed = this.clock.getElapsedTime() - startTime;
+          const progress = Math.min(elapsed / duration, 1);
+
+          const obj = this.getObject(id);
+          if (!obj) return false;
+
+          obj.rotation.x = THREE.MathUtils.lerp(start.x, end.x, progress);
+          obj.rotation.y = THREE.MathUtils.lerp(start.y, end.y, progress);
+          obj.rotation.z = THREE.MathUtils.lerp(start.z, end.z, progress);
+
+          if (progress >= 1) {
+            this.animations.delete(animationKey);
+            resolve();
+            return false;
+          }
+          return true;
+        },
+      });
+    });
+  }
 
   public on(event: EventType, handler: EventHandler): () => void {
     if (!this.eventHandlers.has(event)) {
@@ -417,7 +613,7 @@ export class SceneManager {
     radius: number = 0.01 // 大幅缩小检测半径
   ): boolean {
     // 添加安全平面过滤
-    if (position.y < 0.01) return true; // 地面碰撞判断
+    if (position.y < -0.01) return true; // 地面碰撞判断
 
     const sphere = new THREE.Sphere(position, radius);
 

@@ -1,5 +1,5 @@
 // services/ws.ts
-import { WebSocketEvent, WebSocketConfig, DroneInitData } from "@/types/ws";
+import { WebSocketEvent, WebSocketConfig } from "@/types/ws";
 
 interface WebSocketEventMap {
   connected: { taskId: string };
