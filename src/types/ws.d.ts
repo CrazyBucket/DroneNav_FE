@@ -1,10 +1,4 @@
-export type WebSocketEvent = 
-  | 'connected'
-  | 'disconnected'
-  | 'position_update'
-  | 'mission_complete'
-  | 'error'
-  | string;
+export type WebSocketEvent = keyof WebSocketEventMap;
 
 export interface WebSocketConfig {
   url: string;
@@ -39,8 +33,37 @@ export interface Obstacle {
 }
 
 export interface WebSocketError {
-  type: 'ParseError' | 'ConnectionError' | 'ValidationError';
+  type: "ParseError" | "ConnectionError" | "ValidationError";
   message: string;
   error?: unknown;
   raw?: unknown;
+}
+
+export type WebSocketEvent = keyof WebSocketEventMap;
+
+export interface WebSocketEventMap {
+  connected: {
+    timestamp: string;
+    taskId: string;
+  };
+  disconnected: {
+    timestamp: string;
+    reason?: string;
+  };
+  position_update: {
+    sequence: number;
+    timestamp: string;
+    coordinates: { x: number; y: number; z: number };
+    progress: { current: number; total: number; remaining: number };
+  };
+  mission_complete: {
+    timestamp: string;
+    finalPosition: { x: number; y: number; z: number };
+  };
+  error: {
+    code: string;
+    message: string;
+    details?: unknown;
+    timestamp: string;
+  };
 }

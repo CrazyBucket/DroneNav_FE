@@ -7,6 +7,7 @@ import { SceneManager } from "@/core/SceneManager";
 import { useSettingStore } from "@/store/setting";
 import { loadScene } from "@/core/loadScene";
 import { apis } from "@/services/api";
+import { useCoordinatesStore } from "@/store/coordinates";
 
 export type RenderHandle = {
   resize: (width: number, height: number) => void;
@@ -19,6 +20,7 @@ const Render = forwardRef<RenderHandle>((_, ref) => {
   const axesHelperRef = useRef<THREE.AxesHelper | null>(null);
   const debugSphereRef = useRef<THREE.Mesh | null>(null);
   const { showDebugView } = useSettingStore();
+  const { setCurrentCoordinate } = useCoordinatesStore();
 
   useImperativeHandle(ref, () => ({
     resize: (width: number, height: number) => {
@@ -81,7 +83,13 @@ const Render = forwardRef<RenderHandle>((_, ref) => {
         const scale = 2;
         // 调整模型显示 - 增加比例并设置位置
         drone.scale.set(scale, scale, scale);
-        drone.position.set(0, 3, 0);
+        const initialPosition = { x: 0, y: 3, z: 0 };
+        drone.position.set(
+          initialPosition.x,
+          initialPosition.y,
+          initialPosition.z
+        );
+        setCurrentCoordinate(initialPosition);
         drone.rotation.y = Math.PI / 2;
 
         // 添加模型到场景

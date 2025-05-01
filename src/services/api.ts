@@ -15,11 +15,8 @@ class Apis extends ApiBase {
     return res.data;
   }
 
-  async startSimulation(coordinates: { x: number; y: number; z: number }) {
-    const res = await this.service.post(
-      this.urls.startSimulation!,
-      coordinates
-    );
+  async startSimulation(params: SimulationRequest) {
+    const res = await this.service.post(this.urls.startSimulation!, params);
     return res.data;
   }
 }
