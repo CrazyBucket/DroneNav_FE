@@ -244,7 +244,11 @@ const HomeContent = () => {
           renderTile={id => (
             <div className="h-full">
               {id === "left-pane" ? (
-                <Sidebar collapsed={collapsed} onCollapse={handleCollapse} />
+                <Sidebar
+                  collapsed={collapsed}
+                  onCollapse={handleCollapse}
+                  scene={sceneManagerRef.current}
+                />
               ) : (
                 <div className="h-full py-2 mr-2 transition-all duration-300">
                   <Render ref={renderRef} />

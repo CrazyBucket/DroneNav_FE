@@ -5,7 +5,14 @@ import type { SettingItem } from "@/types/settingItem";
 
 // 配置项数据层
 const useSettings = () => {
-  const { showDebugView, setDebugView } = useSettingStore();
+  const {
+    showDebugView,
+    setDebugView,
+    showPlannedPath,
+    showRealTimePath,
+    setShowPlannedPath,
+    setShowRealTimePath,
+  } = useSettingStore();
 
   const settings: SettingItem[] = [
     {
@@ -14,6 +21,26 @@ const useSettings = () => {
       description: "显示辅助线",
       checked: showDebugView,
       onChange: setDebugView,
+      renderControl: (checked, onChange) => (
+        <Switch checked={checked} onChange={onChange} />
+      ),
+    },
+    {
+      id: "planned-path",
+      title: "计划轨迹",
+      description: "显示规划好的飞行路径",
+      checked: showPlannedPath,
+      onChange: setShowPlannedPath,
+      renderControl: (checked, onChange) => (
+        <Switch checked={checked} onChange={onChange} />
+      ),
+    },
+    {
+      id: "real-time-path",
+      title: "实时轨迹",
+      description: "显示无人机实际飞行路径",
+      checked: showRealTimePath,
+      onChange: setShowRealTimePath,
       renderControl: (checked, onChange) => (
         <Switch checked={checked} onChange={onChange} />
       ),

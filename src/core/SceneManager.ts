@@ -25,15 +25,35 @@ export class SceneManager {
   private controls: OrbitControls;
   private raycaster = new THREE.Raycaster();
   private composer?: EffectComposer;
-
+  private static _isInitialized = false;
+  public static get isInitialized() {
+    return this._isInitialized;
+  }
+  public static safeGetInstance(): SceneManager {
+    if (!this.instance) {
+      throw new Error("SceneManager must be initialized first");
+    }
+    return this.instance;
+  }
   private objectMap = new Map<string, SceneObjectParams>();
   private staticObjects = new Set<string>();
   private lodObjects = new Map<string, THREE.LOD>();
+  private persistentObjects = new Set<string>(); // 跟踪持久对象
+  private trajectoryPaths = {
+    planned: [] as THREE.Vector3[],
+    flight: [] as THREE.Vector3[],
+  };
+  private trajectoryVisible = {
+    planned: true,
+    flight: true,
+  };
 
   private animationCallbacks = new Map<string, FrameRequestCallback>();
   private needsUpdate = true;
   private frameCount = 0;
   private updateInterval = 2;
+  private forceRender = false;
+  private visibilityChangeHandler: (() => void) | null = null;
 
   private pointerCoords = new THREE.Vector2();
   private lastIntersection: THREE.Intersection | null = null;
@@ -53,6 +73,7 @@ export class SceneManager {
     this.renderer = this.initRenderer();
     this.controls = this.initControls();
     this.initEventListeners();
+    SceneManager._isInitialized = true;
     this.initPostProcessing();
     this.tick();
   }
@@ -174,6 +195,12 @@ export class SceneManager {
     const controls = new OrbitControls(this.camera, this.renderer.domElement);
     controls.enableDamping = true;
     controls.dampingFactor = 0.05;
+    controls.minDistance = 1; // 允许更近距离观察
+    controls.maxDistance = 1000; // 允许更远距离观察
+    controls.maxPolarAngle = Math.PI; // 允许完全翻转视角
+    controls.minPolarAngle = 0; // 允许完全俯视
+    controls.enablePan = true; // 启用平移
+    controls.screenSpacePanning = true; // 使用屏幕空间平移
     controls.addEventListener("change", () => this.markNeedsUpdate());
     return controls;
   }
@@ -240,9 +267,24 @@ export class SceneManager {
     }
   }
 
-  public removeObject(id: string): void {
+  public removeObject(id: string, force: boolean = false): void {
+    // 轨迹对象特殊处理，确保不会被意外删除
+    if ((id === "planned-trajectory" || id === "flight-trajectory") && !force) {
+      console.log(`[SceneManager] 轨迹对象${id}被保护，跳过移除`);
+      return;
+    }
+
     const params = this.objectMap.get(id);
     if (!params) return;
+
+    // 检查是否为持久对象，且不是强制移除
+    if (
+      !force &&
+      (this.persistentObjects.has(id) || params.object.userData.persistent)
+    ) {
+      console.log(`对象 ${id} 被标记为持久显示，跳过移除`);
+      return;
+    }
 
     // 清理资源
     if (params.lodLevels) {
@@ -254,6 +296,7 @@ export class SceneManager {
 
     this.objectMap.delete(id);
     this.staticObjects.delete(id);
+    this.persistentObjects.delete(id); // 从持久对象集合中移除
     this.markNeedsUpdate();
   }
 
@@ -331,28 +374,58 @@ export class SceneManager {
     this.needsUpdate = true;
   }
 
-  private smartRender(): void {
-    if (this.frameCount % this.updateInterval !== 0 && !this.needsUpdate)
-      return;
+  /**
+   * 请求场景重新渲染
+   * 提供给外部组件使用
+   */
+  public requestRender(): void {
+    this.markNeedsUpdate();
+  }
 
-    if (this.composer) {
-      this.composer.render();
-    } else {
-      this.renderer.render(this.scene, this.camera);
+  private smartRender(): void {
+    // 如果存在持久对象，增加刷新频率
+    const hasPersistentObjects = this.persistentObjects.size > 0;
+
+    // 如果设置了强制渲染标志，或有持久对象，或需要按帧率更新，就执行渲染
+    if (
+      this.forceRender ||
+      hasPersistentObjects ||
+      this.frameCount % this.updateInterval === 0 ||
+      this.needsUpdate
+    ) {
+      // 强制渲染或标记需要更新
+      this.markNeedsUpdate();
+
+      if (this.composer) {
+        this.composer.render();
+      } else {
+        this.renderer.render(this.scene, this.camera);
+      }
+      this.needsUpdate = false;
     }
-    this.needsUpdate = false;
+
     this.frameCount++;
   }
 
   private tick = (): void => {
     requestAnimationFrame(this.tick);
     const deltaTime = this.clock.getDelta();
+
+    const hasActiveAnimations = this.animations.size > 0;
+
+    // 在强制渲染模式或有活跃动画时更新所有对象
+    if (this.forceRender || hasActiveAnimations) {
+      this.markNeedsUpdate();
+    }
+
+    // 更新动画
     this.animations.forEach((animation, key) => {
       const shouldContinue = animation.update(deltaTime);
       if (!shouldContinue) {
         this.animations.delete(key);
       }
     });
+
     // 按需更新静态对象
     this.staticObjects.forEach(id => {
       const obj = this.objectMap.get(id)?.object;
@@ -482,6 +555,15 @@ export class SceneManager {
     }
 
     await this.animateToPosition(id, target, duration);
+    // 动画完成后添加飞行轨迹点
+    try {
+      this.addFlightPoint(target.clone());
+      console.log(
+        `[SceneManager] 添加动画结束后的飞行轨迹点: ${target.toArray()}`
+      );
+    } catch (error) {
+      console.error("[SceneManager] 添加飞行轨迹点失败:", error);
+    }
     this.isAnimating = false;
   }
 
@@ -694,8 +776,8 @@ export class SceneManager {
     }
   }
   public listCollidableObjects(): void {
-    console.log("可碰撞物体列表：");
-    Array.from(this.objectMap.values()).forEach(params => {
+    console.log("场景中的碰撞物体:");
+    this.objectMap.forEach(params => {
       if (params.collidable) {
         const pos = params.object.position;
         console.log(
@@ -703,5 +785,375 @@ export class SceneManager {
         );
       }
     });
+  }
+
+  /**
+   * 设置强制渲染模式
+   * @param force 是否强制渲染
+   */
+  public setForceRender(force: boolean): void {
+    this.forceRender = force;
+
+    // 如果开启强制渲染，马上标记需要更新
+    if (force) {
+      this.markNeedsUpdate();
+
+      // 移除之前的监听器（如果有）
+      if (this.visibilityChangeHandler) {
+        document.removeEventListener(
+          "visibilitychange",
+          this.visibilityChangeHandler
+        );
+        this.visibilityChangeHandler = null;
+      }
+
+      // 添加新的监听器
+      this.visibilityChangeHandler = () => {
+        if (document.hidden && this.forceRender) {
+          // 如果页面隐藏但需要强制渲染，创建一个渲染循环
+          const renderLoop = () => {
+            if (this.forceRender && document.hidden) {
+              this.markNeedsUpdate();
+              this.smartRender();
+              setTimeout(renderLoop, 16); // 约60fps
+            }
+          };
+          renderLoop();
+        }
+      };
+
+      // 监听页面可见性变化
+      document.addEventListener(
+        "visibilitychange",
+        this.visibilityChangeHandler
+      );
+    } else {
+      // 关闭强制渲染时，移除监听器
+      if (this.visibilityChangeHandler) {
+        document.removeEventListener(
+          "visibilitychange",
+          this.visibilityChangeHandler
+        );
+        this.visibilityChangeHandler = null;
+      }
+    }
+  }
+
+  /**
+   * 设置对象的持久显示
+   * @param id 对象ID
+   * @param persistent 是否持久显示
+   */
+  public setPersistent(id: string, persistent: boolean = true): void {
+    const params = this.objectMap.get(id);
+    if (!params) return;
+
+    params.object.userData.persistent = persistent;
+
+    // 添加或移除对象ID到持久对象集合
+    if (persistent) {
+      this.persistentObjects.add(id);
+      console.log(
+        `对象 ${id} 被标记为持久对象，现有 ${this.persistentObjects.size} 个持久对象`
+      );
+    } else {
+      this.persistentObjects.delete(id);
+    }
+
+    // 确保场景重新渲染
+    this.requestRender();
+  }
+
+  /**
+   * 获取所有持久对象的ID列表
+   */
+  public getPersistentObjects(): string[] {
+    // 检查轨迹对象是否存在，但不在persistentObjects集合中
+    if (!this.persistentObjects.has("planned-trajectory")) {
+      const plannedExists = !!this.getObject("planned-trajectory");
+      if (plannedExists) {
+        this.persistentObjects.add("planned-trajectory");
+      }
+    }
+
+    if (!this.persistentObjects.has("flight-trajectory")) {
+      const flightExists = !!this.getObject("flight-trajectory");
+      if (flightExists) {
+        this.persistentObjects.add("flight-trajectory");
+      }
+    }
+
+    // 检查是否有数据但没有对象，如果有则重新渲染
+    if (
+      this.trajectoryPaths.planned.length >= 2 &&
+      !this.getObject("planned-trajectory")
+    ) {
+      console.log("[SceneManager] 检测到计划轨迹缺失，正在恢复");
+      this.renderTrajectory("planned");
+    }
+
+    if (
+      this.trajectoryPaths.flight.length >= 2 &&
+      !this.getObject("flight-trajectory")
+    ) {
+      console.log("[SceneManager] 检测到飞行轨迹缺失，正在恢复");
+      this.renderTrajectory("flight");
+    }
+
+    // 返回持久对象列表
+    const objects = Array.from(this.persistentObjects);
+
+    // 添加调试信息 - 应用程序全局状态下可见
+    console.log(`[SceneManager] 持久对象: ${objects.length}个`, {
+      objects,
+      plannedPath: this.trajectoryPaths.planned.length,
+      flightPath: this.trajectoryPaths.flight.length,
+    });
+
+    return objects;
+  }
+
+  /**
+   * 检查对象是否为持久显示
+   * @param id 对象ID
+   */
+  public isPersistent(id: string): boolean {
+    return this.persistentObjects.has(id);
+  }
+
+  /**
+   * 轨迹管理功能
+   */
+
+  // 设置计划轨迹路径
+  public setPlannedPath(points: THREE.Vector3[]): void {
+    // 保留旧点数据用于渐变动画
+    const oldPoints = [...this.trajectoryPaths.planned];
+    this.trajectoryPaths.planned = points.map(p => p.clone());
+
+    // 创建渐变动画
+    if (oldPoints.length > 0) {
+      const duration = 1000; // 动画时长1秒
+      const startTime = Date.now();
+
+      const animate = () => {
+        const progress = Math.min((Date.now() - startTime) / duration, 1);
+
+        // 插值生成中间点
+        const interpolatedPoints = oldPoints.map((oldPt, i) => {
+          const newPt = points[i] || oldPt.clone();
+          return oldPt.clone().lerp(newPt, progress);
+        });
+
+        // 更新几何体
+        const plannedLine = this.getObject("planned-trajectory") as THREE.Line;
+        if (plannedLine) {
+          plannedLine.geometry.setFromPoints(interpolatedPoints);
+        }
+
+        if (progress < 1) requestAnimationFrame(animate);
+      };
+
+      animate();
+    }
+
+    this.renderTrajectory("planned");
+  }
+
+  // 设置飞行轨迹路径
+  public setFlightPath(points: THREE.Vector3[]): void {
+    // 复制点以避免外部修改
+    this.trajectoryPaths.flight = points.map(p => p.clone());
+    console.log(`[SceneManager] 设置飞行轨迹，点数: ${points.length}`);
+    this.renderTrajectories();
+  }
+
+  // 添加飞行点
+  public addFlightPoint(point: THREE.Vector3): void {
+    // 检查是否是重复点
+    if (this.trajectoryPaths.flight.length > 0) {
+      const lastPoint =
+        this.trajectoryPaths.flight[this.trajectoryPaths.flight.length - 1];
+      if (lastPoint && lastPoint.distanceTo(point) < 0.001) {
+        return; // 忽略几乎相同的点
+      }
+    }
+
+    this.trajectoryPaths.flight.push(point.clone());
+    const flightLine = this.getObject("flight-trajectory") as THREE.Line;
+    if (flightLine) {
+      const newGeometry = new THREE.BufferGeometry().setFromPoints(
+        this.trajectoryPaths.flight
+      );
+      flightLine.geometry.dispose();
+      flightLine.geometry = newGeometry;
+    }
+    this.smartRender();
+  }
+
+  // 设置轨迹可见性
+  public setTrajectoryVisibility(
+    type: "planned" | "flight",
+    visible: boolean
+  ): void {
+    // 如果可见性状态没有变化，则不需要进一步处理
+    if (this.trajectoryVisible[type] === visible) {
+      return;
+    }
+
+    console.log(
+      `[SceneManager] 设置${
+        type === "planned" ? "计划" : "飞行"
+      }轨迹可见性: ${visible}`
+    );
+
+    // 更新可见性状态
+    this.trajectoryVisible[type] = visible;
+
+    // 直接设置轨迹对象的可见性属性（如果存在）
+    const id = `${type}-trajectory`;
+    const trajectoryObject = this.getObject(id);
+    if (visible && this.trajectoryPaths[type].length === 0) {
+      this.trajectoryPaths[type] = [new THREE.Vector3(), new THREE.Vector3()];
+    }
+    if (trajectoryObject) {
+      trajectoryObject.visible = visible;
+      // 请求重新渲染以反映可见性变化
+      this.requestRender();
+    } else if (visible && this.trajectoryPaths[type].length >= 2) {
+      // 如果轨迹对象不存在，但应该可见并且有足够的点数据，则渲染它
+      this.renderTrajectory(type);
+    }
+  }
+
+  // 清除轨迹
+  public clearTrajectories(options: {
+    clearPlanned?: boolean;
+    clearFlight?: boolean;
+  }): void {
+    if (options.clearPlanned) {
+      this.trajectoryPaths.planned = [];
+      this.removeObject("planned-trajectory", true);
+    }
+
+    if (options.clearFlight) {
+      this.trajectoryPaths.flight = [];
+      this.removeObject("flight-trajectory", true);
+    }
+
+    console.log("[SceneManager] 轨迹清除完成", {
+      plannedRemaining: this.trajectoryPaths.planned.length,
+      flightRemaining: this.trajectoryPaths.flight.length,
+    });
+  }
+
+  // 渲染所有轨迹
+  private renderTrajectories(): void {
+    this.renderTrajectory("planned");
+    this.renderTrajectory("flight");
+  }
+
+  // 渲染单个轨迹
+  private renderTrajectory(type: "planned" | "flight"): void {
+    const id = `${type}-trajectory`;
+    const points = this.trajectoryPaths[type];
+    const visible = this.trajectoryVisible[type];
+
+    // 先检查现有对象
+    const existingObject = this.getObject(id);
+
+    // 如果对象已存在，直接设置可见性
+    if (existingObject) {
+      existingObject.visible = visible;
+
+      // 如果设置为不可见，或者不需要重新渲染，直接返回
+      if (visible && points.length >= 2) {
+        const line = existingObject as THREE.Line;
+        const oldGeometry = line.geometry;
+
+        // 创建新几何体
+        const newGeometry = new THREE.BufferGeometry().setFromPoints(points);
+
+        // 拷贝几何体属性（避免dispose问题）
+        line.geometry = newGeometry;
+
+        // 如果是虚线需要重新计算
+        if (type === "planned") {
+          (line as THREE.Line).computeLineDistances();
+        }
+
+        // 清理旧几何体
+        oldGeometry.dispose();
+      }
+    }
+
+    // 如果没有足够的点来渲染，直接返回
+    if (points.length < 2) {
+      return;
+    }
+    // 如果不可见且对象不存在，不需要创建
+    if (!visible && !existingObject) {
+      return;
+    }
+    // 如果对象已存在并且可见，且有足够的点，则不需要重新创建
+    if (existingObject && visible && points.length >= 2) {
+      // 只有当存在对象且可见时，才不需要重新创建
+      return;
+    }
+
+    // 创建几何体
+    const geometry = new THREE.BufferGeometry().setFromPoints(points);
+    let material;
+    let line;
+
+    if (type === "planned") {
+      // 计划轨迹使用虚线
+      material = new THREE.LineDashedMaterial({
+        color: 0x38b6ff,
+        dashSize: 0.4,
+        gapSize: 0.3,
+        opacity: 0.7,
+        transparent: true,
+      });
+      line = new THREE.Line(geometry, material);
+      line.computeLineDistances();
+      // 设置较低的渲染顺序，确保在实际轨迹之下
+      line.renderOrder = 1;
+    } else {
+      // 飞行轨迹使用实线
+      material = new THREE.LineBasicMaterial({
+        color: 0x50c878,
+        linewidth: 3,
+        transparent: true,
+        opacity: 0.9,
+      });
+      line = new THREE.Line(geometry, material);
+      line.renderOrder = 2;
+    }
+
+    // 设置线条可见性
+    line.visible = visible;
+
+    // 添加到场景
+    this.addObject({
+      id,
+      object: line,
+      selectable: false,
+      static: false,
+    });
+
+    // 确保轨迹在每一帧都被渲染
+    this.forceRender = true;
+
+    // 标记为永久对象 - 确保不会被意外删除
+    this.setPersistent(id, true);
+
+    // 强制保存一个永久引用，确保不会被垃圾回收
+    // @ts-ignore: 在类上添加动态属性
+    this[`_${id}_permanent_ref`] = line;
+
+    // 直接检查是否添加成功
+    const added = this.getObject(id);
+    console.log(`[SceneManager] 轨迹${id}添加${added ? "成功" : "失败"}`);
   }
 }

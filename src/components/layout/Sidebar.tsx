@@ -1,4 +1,4 @@
-import React, { useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { Button } from "antd";
 import {
   AppstoreOutlined,
@@ -11,6 +11,7 @@ import "./index.css";
 import { MIN_RIGHT_PANE_WIDTH } from "@/store/state";
 import Setting from "@/components/Setting";
 import Operations from "@/components/Operations";
+import { useSettingStore } from "@/store/setting";
 
 type FunctionArea = "views" | "settings" | "controls";
 
@@ -18,17 +19,23 @@ interface SidebarProps {
   className?: string;
   onCollapse?: (collapsed: boolean) => void;
   collapsed?: boolean;
+  scene: any;
 }
 
 const Sidebar: React.FC<SidebarProps> = ({
   className,
   onCollapse,
   collapsed,
+  scene,
 }) => {
   const [activeArea, setActiveArea] = useState<FunctionArea>("views");
-  const containerRef = useRef<HTMLDivElement>(null);
-  const [panelWidth, setPanelWidth] = useState("100%");
-
+  const { showPlannedPath, showRealTimePath } = useSettingStore();
+  useEffect(() => {
+    if (!scene) return;
+    scene.setTrajectoryVisibility("planned", showPlannedPath);
+    scene.setTrajectoryVisibility("flight", showRealTimePath);
+    scene.requestRender();
+  }, [showPlannedPath, showRealTimePath]);
   const navButtons = [
     {
       key: "views",

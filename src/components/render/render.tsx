@@ -8,9 +8,33 @@ import { useSettingStore } from "@/store/setting";
 import { loadScene } from "@/core/loadScene";
 import { apis } from "@/services/api";
 import { useCoordinatesStore } from "@/store/coordinates";
+import { useSimulationStore } from "@/store/simulationState";
+import CircularText from "../CircularText";
 
 export type RenderHandle = {
   resize: (width: number, height: number) => void;
+};
+
+// 本地加载组件
+const RenderLoading = () => {
+  const { isLoading, simulationStatus } = useSimulationStore();
+
+  if (!isLoading) {
+    return null;
+  }
+
+  let loadingText = "LOADING * SCENE * ";
+  if (simulationStatus === "planning") {
+    loadingText = "PLANNING * PATH * ";
+  } else if (simulationStatus === "flying") {
+    loadingText = "DRONE * FLYING * ";
+  }
+
+  return (
+    <div className="absolute inset-0 flex items-center justify-center bg-black/60 z-50 rounded-xl backdrop-blur-sm">
+      <CircularText text={loadingText} onHover="speedUp" spinDuration={20} />
+    </div>
+  );
 };
 
 const Render = forwardRef<RenderHandle>((_, ref) => {
@@ -84,7 +108,7 @@ const Render = forwardRef<RenderHandle>((_, ref) => {
         const scale = 2;
         // 调整模型显示 - 增加比例并设置位置
         drone.scale.set(scale, scale, scale);
-        const initialPosition = { x: 0, y: 0, z: 3 };
+        const initialPosition = { x: 0, y: 0, z: 1 };
 
         drone.position.set(
           initialPosition.x,
@@ -147,8 +171,10 @@ const Render = forwardRef<RenderHandle>((_, ref) => {
     <div
       id="scene-container"
       ref={containerRef}
-      className="rounded-xl overflow-hidden h-full w-full"
-    />
+      className="rounded-xl overflow-hidden h-full w-full relative"
+    >
+      <RenderLoading />
+    </div>
   );
 });
 

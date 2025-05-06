@@ -23,7 +23,7 @@
     "antd": "^5.24.3",
     "axios": "^1.8.3",
     "clsx": "^2.1.1",
-    "framer-motion": "^12.6.5",
+    "framer-motion": "^12.10.0",
     "less": "^4.3.0",
     "lodash-es": "^4.17.21",
     "react": "18.2.0",
@@ -33,7 +33,9 @@
     "react-mosaic-component": "^6.1.1",
     "react-router-dom": "^7.3.0",
     "three": "^0.173.0",
+    "three-fatline": "^0.7.1",
     "three-stdlib": "^2.35.15",
+    "three.meshline": "^1.4.0",
     "zustand": "^5.0.3"
   },
   "devDependencies": {
