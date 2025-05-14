@@ -1,0 +1,49 @@
+/* 覆盖antd按钮的默认悬停样式 */
+.custom-button.ant-btn {
+  /* 确保背景渐变在任何状态下都保持 */
+  background-image: inherit !important;
+}
+
+/* 覆盖antd按钮的悬停状态 */
+.custom-button.ant-btn:hover,
+.custom-button.ant-btn:focus,
+.custom-button.ant-btn:active {
+  color: white !important;
+  border-color: transparent !important;
+  background-color: transparent !important;
+  filter: brightness(1.1);
+}
+
+/* 覆盖primary类型按钮的悬停状态 */
+.custom-button.ant-btn-primary:hover,
+.custom-button.ant-btn-primary:focus,
+.custom-button.ant-btn-primary:active {
+  color: white !important;
+  border-color: transparent !important;
+  background-color: transparent !important;
+  filter: brightness(1.1);
+}
+
+/* 确保按钮内容层级正确 */
+.custom-button .ant-btn-icon + span,
+.custom-button > span {
+  position: relative;
+  z-index: 10;
+}
+
+/* 加载状态不改变背景 */
+.custom-button.ant-btn-loading::before {
+  background: transparent !important;
+  opacity: 0.6;
+}
+
+/* 禁用状态样式 */
+.custom-button.ant-btn[disabled],
+.custom-button.ant-btn[disabled]:hover,
+.custom-button.ant-btn[disabled]:focus,
+.custom-button.ant-btn[disabled]:active {
+  color: rgba(255, 255, 255, 0.6) !important;
+  border-color: transparent !important;
+  filter: grayscale(50%) brightness(0.7);
+  cursor: not-allowed;
+}

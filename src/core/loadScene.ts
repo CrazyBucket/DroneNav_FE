@@ -24,35 +24,57 @@ export async function loadScene(
   sceneManager: SceneManager,
   coordinateSystem: "ENU" | "NED" = "ENU"
 ): Promise<void> {
+  console.log(
+    `开始加载场景，共 ${obstacles.length} 个障碍物，坐标系: ${coordinateSystem}`
+  );
+
   try {
+    // 初始化工厂，确保支持所有类型的障碍物
     initFactories();
 
     // 批量创建障碍物
-    const creationPromises = obstacles.map(async obstacle => {
-      console.log("obstacle", obstacle);
-
-      // 深拷贝避免数据污染
-      const processed = JSON.parse(JSON.stringify(obstacle)) as Obstacle;
-
-      // 执行坐标系转换
-      processed.position = coordinateTransformer[coordinateSystem](
-        processed.position
+    console.log("开始创建障碍物...");
+    const creationPromises = obstacles.map(async (obstacle, index) => {
+      console.log(
+        `处理障碍物 ${index + 1}/${obstacles.length}: ${obstacle.id} (${
+          obstacle.type
+        })`
       );
 
-      // 创建Three对象
-      const obj = ObstacleFactory.create(processed);
+      try {
+        // 深拷贝避免数据污染
+        const processed = JSON.parse(JSON.stringify(obstacle)) as Obstacle;
 
-      // 添加到场景管理器
-      return sceneManager.addObject({
-        id: obstacle.id,
-        object: await obj,
-        static: objectClassifier.isStatic(obstacle.type),
-        collidable: true,
-      });
+        // 执行坐标系转换
+        processed.position = coordinateTransformer[coordinateSystem](
+          processed.position
+        );
+
+        // 创建Three对象
+        console.log(`为障碍物 ${obstacle.id} 创建3D对象`);
+        const obj = await ObstacleFactory.create(processed);
+
+        // 添加到场景管理器
+        console.log(`将障碍物 ${obstacle.id} 添加到场景`);
+        sceneManager.addObject({
+          id: obstacle.id,
+          object: obj,
+          static: objectClassifier.isStatic(obstacle.type as any),
+          collidable: true,
+        });
+
+        return obstacle.id;
+      } catch (error) {
+        console.error(`创建障碍物 ${obstacle.id} 失败:`, error);
+        return null;
+      }
     });
 
-    await Promise.all(creationPromises);
-    console.log("testScene");
+    const results = await Promise.all(creationPromises);
+    const successCount = results.filter(Boolean).length;
+    console.log(`障碍物创建完成，成功: ${successCount}/${obstacles.length}`);
+
+    // 日志场景信息
     console.table(sceneManager.getAllObjectsInfo(), [
       "id",
       "type",
@@ -60,8 +82,11 @@ export async function loadScene(
       "rotation",
       "static",
     ]);
+
+    // 请求场景渲染更新
+    sceneManager.requestRender();
   } catch (error) {
-    console.error("Scene loading failed:", error);
+    console.error("场景加载失败:", error);
     throw new Error(
       `场景加载失败: ${error instanceof Error ? error.message : "未知错误"}`
     );

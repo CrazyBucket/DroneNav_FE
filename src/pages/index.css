@@ -8,19 +8,93 @@
   right: 0;
 }
 .mosaic-split.-row {
-  width: 3px;
-  background: transparent;
+  width: 2px !important; /* 减小拖动手柄宽度 */
+  margin-left: -1px; /* 居中拖动手柄 */
+  background: rgba(255, 255, 255, 0.1);
+  z-index: 10; /* 提高z-index确保它在最上层 */
 }
 .mosaic-tile {
   margin: 0 !important;
   overflow: hidden;
 }
+/* 最后一个mosaic-tile保留右侧边距 */
+.mosaic-tile:last-child {
+  margin: 8px 8px 8px 0 !important;
+}
 .react-mosaic-container {
   display: flex !important;
   flex-direction: column;
-  height: 100% !important; 
+  height: 100% !important;
 }
 #scene-container {
   flex: 1;
   min-height: 0;
+  border-radius: 0.75rem;
+}
+
+/* 确保侧边菜单正常显示 */
+.mosaic-tile[id*="left-pane"] {
+  margin: 0 !important;
+  overflow: visible;
+}
+
+/* 覆盖Mosaic的样式 */
+.mosaic {
+  background-color: transparent;
+}
+
+/* 自定义拖拽手柄样式 */
+.mosaic-split {
+  position: absolute;
+  z-index: 100 !important; /* 确保拖拽手柄在最上层 */
+  background-color: rgba(255, 255, 255, 0.2);
+  transition: background-color 0.2s ease, width 0.2s ease, margin-left 0.2s ease;
+}
+
+.mosaic-split:hover,
+.mosaic-split-line:hover {
+  background-color: rgba(66, 153, 225, 0.7) !important;
+  width: 8px !important; /* 悬停时增加宽度以便于抓取 */
+  margin-left: -4px; /* 保持居中 */
+}
+
+.mosaic-split.-row {
+  cursor: col-resize;
+  width: 6px !important; /* 增加默认宽度 */
+  margin-left: -3px; /* 居中拖动手柄 */
+}
+
+.mosaic-split.-column {
+  margin-top: -3px;
+  height: 6px;
+  cursor: row-resize;
+}
+
+.mosaic-split-line {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  background-color: rgba(255, 255, 255, 0.2);
+  transition: background-color 0.2s ease;
+}
+
+/* 激活状态样式增强 */
+.mosaic-split.mosaic-split-line.-active,
+.mosaic-split.-dragging,
+.mosaic-split-line.-active {
+  background-color: #3182ce !important; /* 使用更鲜明的蓝色 */
+  width: 8px !important; /* 拖动时增加宽度 */
+  margin-left: -4px; /* 保持居中 */
+  z-index: 999;
+}
+
+/* 调整其他Mosaic组件的样式 */
+.mosaic-tile {
+  margin: 0;
+}
+
+.mosaic-window-toolbar {
+  display: none;
 }

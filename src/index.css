@@ -9,7 +9,16 @@
 
 /* 修复分隔条样式 */
 .mosaic-split.-row {
-  @apply w-1 cursor-col-resize bg-gray-200 hover:bg-blue-400 z-50;
+  @apply w-2 cursor-col-resize bg-none hover:bg-blue-400 z-50;
+}
+
+/* 确保拖动正常工作 */
+.mosaic-split {
+  @apply transition-colors duration-200 hover:bg-blue-400 z-50;
+}
+
+.mosaic-split.-dragging {
+  @apply bg-blue-500 w-2 z-[999];
 }
 
 /* 隐藏工具栏 */
@@ -21,6 +30,12 @@
 .mosaic-root {
   @apply h-full w-full;
 }
+
+/* 修复鼠标样式和交互 */
+.mosaic .mosaic-split:hover {
+  @apply cursor-col-resize;
+}
+
 html,
 body,
 #root {

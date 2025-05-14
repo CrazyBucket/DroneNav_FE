@@ -26,18 +26,21 @@ export interface Obstacle {
 }
 
 export interface WebSocketError {
-  type: "ParseError" | "ConnectionError" | "ValidationError";
+  type:
+    | "ParseError"
+    | "ConnectionError"
+    | "ValidationError"
+    | "CertificateError";
   message: string;
   error?: unknown;
   raw?: unknown;
 }
 
-export type WebSocketEvent = keyof WebSocketEventMap;
 export interface WebSocketEventMap {
   // 系统级事件
   connected: {
     timestamp: string;
-    task_id: string;
+    taskId: string;
   };
   disconnected: {
     timestamp: string;
@@ -46,17 +49,17 @@ export interface WebSocketEventMap {
 
   // 业务级事件
   position_update: {
-    sequence: number;
-    timestamp: string;
+    sequence?: number;
+    timestamp?: string;
     coordinates: { x: number; y: number; z: number };
-    progress: { current: number; total: number; remaining: number };
+    progress: { current: number; total: number; remaining?: number };
   };
   mission_complete: {
-    timestamp: string;
-    final_position: { x: number; y: number; z: number };
+    timestamp?: string;
+    finalPosition: { x: number; y: number; z: number };
   };
   error: {
-    code: string;
+    code: string; // "PARSE_ERROR" | "CONNECTION_ERROR" | "CONNECTION_FAILED" | "CERTIFICATE_ERROR"
     message: string;
     details?: unknown;
     timestamp: string;

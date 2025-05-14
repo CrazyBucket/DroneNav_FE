@@ -14,7 +14,7 @@
 
 .sidebar-content {
   z-index: 1; /* 确保浮于内容层上方 */
-  box-shadow: 8px 0 15px -5px rgba(0,0,0,0.1); /* 添加右侧阴影增强层次感 */
+  box-shadow: 8px 0 15px -5px rgba(0, 0, 0, 0.1); /* 添加右侧阴影增强层次感 */
 }
 
 /* 防止父容器宽度不足时的挤压 */
@@ -22,19 +22,34 @@
   min-width: 56px; /* 左侧导航宽度 */
 }
 @keyframes smoke-move {
-  0% { transform: translate(-5%, -5%) scale(1.1); }
-  50% { transform: translate(5%, 5%) scale(1.15); }
-  100% { transform: translate(-5%, -5%) scale(1.1); }
+  0% {
+    transform: translate(-5%, -5%) scale(1.1);
+  }
+  50% {
+    transform: translate(5%, 5%) scale(1.15);
+  }
+  100% {
+    transform: translate(-5%, -5%) scale(1.1);
+  }
 }
 
 @keyframes smoke-flow {
-  0% { transform: translateX(-10%) skew(-5deg); }
-  100% { transform: translateX(10%) skew(5deg); }
+  0% {
+    transform: translateX(-10%) skew(-5deg);
+  }
+  100% {
+    transform: translateX(10%) skew(5deg);
+  }
 }
 
 @keyframes twinkle {
-  0%, 100% { opacity: 0.3; }
-  50% { opacity: 0.8; }
+  0%,
+  100% {
+    opacity: 0.3;
+  }
+  50% {
+    opacity: 0.8;
+  }
 }
 
 .animate-smoke-1 {
@@ -58,7 +73,10 @@
     rgba(0, 20, 10, 0.9) 0%,
     rgba(0, 30, 15, 0.8) 100%
   ) !important;
-  box-shadow: 
-    0 0 15px rgba(0, 40, 20, 0.5),
+  box-shadow: 0 0 15px rgba(0, 40, 20, 0.5),
     inset 0 0 10px rgba(0, 255, 150, 0.1);
+}
+
+.mosaic-tile:last-child {
+  margin-right: 8px !important;
 }

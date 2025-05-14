@@ -4,6 +4,7 @@ import {
   AppstoreOutlined,
   SettingOutlined,
   ControlOutlined,
+  SecurityScanOutlined,
   LeftOutlined,
 } from "@ant-design/icons";
 import clsx from "clsx";
@@ -11,15 +12,19 @@ import "./index.css";
 import { MIN_RIGHT_PANE_WIDTH } from "@/store/state";
 import Setting from "@/components/Setting";
 import Operations from "@/components/Operations";
+import SceneSelector from "@/components/SceneSelector";
+import SecurityMonitor from "@/components/SecurityMonitor";
 import { useSettingStore } from "@/store/setting";
+import { RenderHandle } from "@/components/Render/Render";
 
-type FunctionArea = "views" | "settings" | "controls";
+type FunctionArea = "views" | "settings" | "controls" | "security";
 
 interface SidebarProps {
   className?: string;
   onCollapse?: (collapsed: boolean) => void;
   collapsed?: boolean;
   scene: any;
+  renderRef?: React.RefObject<RenderHandle>;
 }
 
 const Sidebar: React.FC<SidebarProps> = ({
@@ -27,6 +32,7 @@ const Sidebar: React.FC<SidebarProps> = ({
   onCollapse,
   collapsed,
   scene,
+  renderRef,
 }) => {
   const [activeArea, setActiveArea] = useState<FunctionArea>("views");
   const { showPlannedPath, showRealTimePath } = useSettingStore();
@@ -40,7 +46,7 @@ const Sidebar: React.FC<SidebarProps> = ({
     {
       key: "views",
       icon: <AppstoreOutlined />,
-      title: "视图管理",
+      title: "场景选择",
     },
     {
       key: "settings",
@@ -52,14 +58,20 @@ const Sidebar: React.FC<SidebarProps> = ({
       icon: <ControlOutlined />,
       title: "操作面板",
     },
+    {
+      key: "security",
+      icon: <SecurityScanOutlined />,
+      title: "安全监控",
+    },
   ];
 
   const renderContent = () => {
     return (
       <div className="text-white/80">
-        {activeArea === "views" && <div className="p-4">视图管理区域</div>}
+        {activeArea === "views" && <SceneSelector renderRef={renderRef} />}
         {activeArea === "settings" && <Setting />}
         {activeArea === "controls" && <Operations />}
+        {activeArea === "security" && <SecurityMonitor />}
       </div>
     );
   };

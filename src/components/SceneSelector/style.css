@@ -1,0 +1,16 @@
+/* 确保List.Item.Meta内容垂直居中 */
+.scene-list .ant-list-item-meta {
+  align-items: center !important;
+}
+
+/* 确保Avatar组件垂直居中 */
+.scene-list .ant-avatar {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+}
+
+/* 修复描述文本行高，使整体内容保持居中 */
+.scene-list .ant-list-item-meta-description {
+  line-height: 1.2;
+}

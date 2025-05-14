@@ -555,8 +555,12 @@ export class SceneManager {
     }
 
     await this.animateToPosition(id, target, duration);
+
     // 动画完成后添加飞行轨迹点
     try {
+      // 确保轨迹正确可见
+      this.setTrajectoryVisibility("flight", true);
+      // 添加轨迹点
       this.addFlightPoint(target.clone());
       console.log(
         `[SceneManager] 添加动画结束后的飞行轨迹点: ${target.toArray()}`
@@ -564,6 +568,7 @@ export class SceneManager {
     } catch (error) {
       console.error("[SceneManager] 添加飞行轨迹点失败:", error);
     }
+
     this.isAnimating = false;
   }
 
@@ -979,15 +984,37 @@ export class SceneManager {
       }
     }
 
+    // 添加到轨迹点数组
     this.trajectoryPaths.flight.push(point.clone());
-    const flightLine = this.getObject("flight-trajectory") as THREE.Line;
+    console.log(
+      `[SceneManager] 添加飞行点: ${point.x}, ${point.y}, ${point.z}, 当前点数: ${this.trajectoryPaths.flight.length}`
+    );
+
+    // 获取现有轨迹对象
+    const flightLine = this.getObject("flight-trajectory");
+
+    // 如果轨迹对象存在且轨迹点数量充足，更新现有轨迹
     if (flightLine) {
-      const newGeometry = new THREE.BufferGeometry().setFromPoints(
-        this.trajectoryPaths.flight
-      );
-      flightLine.geometry.dispose();
-      flightLine.geometry = newGeometry;
+      // 判断对象类型并相应处理
+      if (flightLine instanceof THREE.Line) {
+        const newGeometry = new THREE.BufferGeometry().setFromPoints(
+          this.trajectoryPaths.flight
+        );
+        flightLine.geometry.dispose();
+        flightLine.geometry = newGeometry;
+      } else if (flightLine instanceof THREE.Mesh) {
+        // 如果是Mesh（管道几何体），则需要完全重建
+        this.removeObject("flight-trajectory", true);
+        this.renderTrajectory("flight");
+      }
+    } else if (this.trajectoryPaths.flight.length >= 2) {
+      // 如果轨迹对象不存在但有足够的点，创建新轨迹
+      this.renderTrajectory("flight");
     }
+
+    // 强制渲染一次
+    this.requestRender();
+    this.markNeedsUpdate();
     this.smartRender();
   }
 
@@ -1066,78 +1093,102 @@ export class SceneManager {
     if (existingObject) {
       existingObject.visible = visible;
 
-      // 如果设置为不可见，或者不需要重新渲染，直接返回
-      if (visible && points.length >= 2) {
-        const line = existingObject as THREE.Line;
-        const oldGeometry = line.geometry;
-
-        // 创建新几何体
-        const newGeometry = new THREE.BufferGeometry().setFromPoints(points);
-
-        // 拷贝几何体属性（避免dispose问题）
-        line.geometry = newGeometry;
-
-        // 如果是虚线需要重新计算
-        if (type === "planned") {
-          (line as THREE.Line).computeLineDistances();
-        }
-
-        // 清理旧几何体
-        oldGeometry.dispose();
+      // 如果设置为不可见，或者需要重新渲染，处理相应逻辑
+      if (!visible) {
+        return; // 如果不可见，就直接返回
       }
+
+      // 移除旧对象，我们将重新创建
+      this.removeObject(id, true);
     }
 
     // 如果没有足够的点来渲染，直接返回
-    if (points.length < 2) {
-      return;
-    }
-    // 如果不可见且对象不存在，不需要创建
-    if (!visible && !existingObject) {
-      return;
-    }
-    // 如果对象已存在并且可见，且有足够的点，则不需要重新创建
-    if (existingObject && visible && points.length >= 2) {
-      // 只有当存在对象且可见时，才不需要重新创建
+    if (points.length < 2 || !visible) {
       return;
     }
 
-    // 创建几何体
-    const geometry = new THREE.BufferGeometry().setFromPoints(points);
-    let material;
-    let line;
+    // 根据轨迹类型确定参数
+    let color, tubeDiameter;
+    if (type === "planned") {
+      color = 0x38b6ff; // 鲜艳的蓝色
+      tubeDiameter = 0.05; // 较细的预测轨迹
+    } else {
+      color = 0x00ff7f; // 鲜艳的绿色
+      tubeDiameter = 0.08; // 较粗的实际轨迹
+    }
+
+    let object3D;
 
     if (type === "planned") {
-      // 计划轨迹使用虚线
-      material = new THREE.LineDashedMaterial({
-        color: 0x38b6ff,
-        dashSize: 0.4,
-        gapSize: 0.3,
-        opacity: 0.7,
+      // 对计划轨迹使用虚线效果
+      const material = new THREE.LineDashedMaterial({
+        color: color,
+        dashSize: 0.6,
+        gapSize: 0.2,
+        opacity: 0.9,
         transparent: true,
+        linewidth: 3, // 注意: 在WebGL中这个可能不生效
       });
-      line = new THREE.Line(geometry, material);
+
+      // 创建三维路径
+      const path = new THREE.Path();
+      const pathGeometry = new THREE.BufferGeometry();
+
+      // 使用EdgeGeometry创建更粗的线
+      const positions = new Float32Array(points.length * 3);
+
+      for (let i = 0; i < points.length; i++) {
+        const p = points[i];
+        if (p) {
+          positions[i * 3] = p.x;
+          positions[i * 3 + 1] = p.y;
+          positions[i * 3 + 2] = p.z;
+        }
+      }
+
+      pathGeometry.setAttribute(
+        "position",
+        new THREE.BufferAttribute(positions, 3)
+      );
+
+      // 设置虚线
+      const line = new THREE.Line(pathGeometry, material);
       line.computeLineDistances();
-      // 设置较低的渲染顺序，确保在实际轨迹之下
-      line.renderOrder = 1;
+
+      object3D = line;
     } else {
-      // 飞行轨迹使用实线
-      material = new THREE.LineBasicMaterial({
-        color: 0x50c878,
-        linewidth: 3,
+      // 对于飞行轨迹，使用管道几何体以获得更好的可视效果
+      // 首先创建弯曲路径
+      const curve = new THREE.CatmullRomCurve3(points);
+
+      // 创建管道几何体
+      const tubeGeometry = new THREE.TubeGeometry(
+        curve,
+        Math.max(20, points.length * 2), // 管道分段数
+        tubeDiameter, // 管道直径
+        8, // 管道横截面分段数
+        false // 不闭合
+      );
+
+      // 创建管道材质
+      const tubeMaterial = new THREE.MeshBasicMaterial({
+        color: color,
         transparent: true,
         opacity: 0.9,
       });
-      line = new THREE.Line(geometry, material);
-      line.renderOrder = 2;
+
+      // 创建管道mesh
+      object3D = new THREE.Mesh(tubeGeometry, tubeMaterial);
     }
 
-    // 设置线条可见性
-    line.visible = visible;
+    // 设置对象属性
+    object3D.visible = visible;
+    object3D.renderOrder = type === "planned" ? 1 : 2;
 
     // 添加到场景
     this.addObject({
       id,
-      object: line,
+      object: object3D,
       selectable: false,
       static: false,
     });
@@ -1150,10 +1201,50 @@ export class SceneManager {
 
     // 强制保存一个永久引用，确保不会被垃圾回收
     // @ts-ignore: 在类上添加动态属性
-    this[`_${id}_permanent_ref`] = line;
+    this[`_${id}_permanent_ref`] = object3D;
 
     // 直接检查是否添加成功
     const added = this.getObject(id);
     console.log(`[SceneManager] 轨迹${id}添加${added ? "成功" : "失败"}`);
+  }
+
+  /**
+   * 调试轨迹状态
+   */
+  public debugTrajectoryStatus(): void {
+    const flightObj = this.getObject("flight-trajectory");
+    const plannedObj = this.getObject("planned-trajectory");
+
+    console.log("轨迹状态调试信息:", {
+      计划轨迹点数: this.trajectoryPaths.planned.length,
+      实际轨迹点数: this.trajectoryPaths.flight.length,
+      计划轨迹对象: plannedObj
+        ? {
+            type: plannedObj.type,
+            visible: plannedObj.visible,
+            persistent: this.isPersistent("planned-trajectory"),
+          }
+        : "不存在",
+      实际轨迹对象: flightObj
+        ? {
+            type: flightObj.type,
+            visible: flightObj.visible,
+            persistent: this.isPersistent("flight-trajectory"),
+          }
+        : "不存在",
+      计划轨迹可见性: this.trajectoryVisible.planned,
+      实际轨迹可见性: this.trajectoryVisible.flight,
+    });
+
+    // 如果发现轨迹点存在但轨迹对象不存在，尝试重建
+    if (this.trajectoryPaths.flight.length >= 2 && !flightObj) {
+      console.log("检测到实际轨迹点存在但轨迹对象缺失，尝试重建...");
+      this.renderTrajectory("flight");
+    }
+
+    if (this.trajectoryPaths.planned.length >= 2 && !plannedObj) {
+      console.log("检测到计划轨迹点存在但轨迹对象缺失，尝试重建...");
+      this.renderTrajectory("planned");
+    }
   }
 }
