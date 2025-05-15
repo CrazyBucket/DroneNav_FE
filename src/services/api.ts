@@ -10,6 +10,8 @@ interface SceneInfo {
 interface SimulationRequest {
   current: { x: number; y: number; z: number };
   target: { x: number; y: number; z: number };
+  speed?: number;
+  droneSize?: { width: number; height: number; depth: number };
 }
 
 interface SimulationResponse {

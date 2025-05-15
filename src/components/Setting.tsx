@@ -2,6 +2,7 @@ import React from "react";
 import { Switch, Divider, Typography } from "antd";
 import { useSettingStore } from "@/store/setting";
 import type { SettingItem } from "@/types/settingItem";
+import DroneSettings from "./DroneSettings";
 
 // 配置项数据层
 const useSettings = () => {
@@ -100,6 +101,11 @@ const Setting: React.FC = () => {
           )}
         </React.Fragment>
       ))}
+
+      <Divider className="!my-3 !border-white/10" />
+
+      {/* 无人机设置部分 */}
+      <DroneSettings />
     </div>
   );
 };

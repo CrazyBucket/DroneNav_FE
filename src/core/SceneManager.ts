@@ -67,6 +67,19 @@ export class SceneManager {
     }
   >();
 
+  private droneSpeed = 1.0;
+  private followingObjectId: string | null = null;
+  private firstPersonMode = false;
+  private firstPersonObjectId: string | null = null;
+  private physicsSettings = {
+    gravityEnabled: false,
+    windStrength: 0,
+    windDirection: new THREE.Vector3(1, 0, 0), // 默认风向：东风（从东向西）
+  };
+
+  private _lastRenderTime = 0;
+  private animationFrameId: number | null = null;
+
   private constructor(private container: HTMLDivElement) {
     this.scene = this.initScene();
     this.camera = this.initCamera();
@@ -382,62 +395,123 @@ export class SceneManager {
     this.markNeedsUpdate();
   }
 
-  private smartRender(): void {
-    // 如果存在持久对象，增加刷新频率
-    const hasPersistentObjects = this.persistentObjects.size > 0;
+  private tick = (): void => {
+    try {
+      // 使用animationFrameId确保不会重复调用tick
+      this.animationFrameId = requestAnimationFrame(this.tick);
 
-    // 如果设置了强制渲染标志，或有持久对象，或需要按帧率更新，就执行渲染
-    if (
-      this.forceRender ||
-      hasPersistentObjects ||
-      this.frameCount % this.updateInterval === 0 ||
-      this.needsUpdate
-    ) {
-      // 强制渲染或标记需要更新
-      this.markNeedsUpdate();
+      // 获取时间增量，用于所有动画和物理计算
+      const delta = this.clock.getDelta();
 
-      if (this.composer) {
-        this.composer.render();
-      } else {
-        this.renderer.render(this.scene, this.camera);
+      // 降低动画更新频率，使用变量控制帧率
+      this.frameCount++;
+      const lowPriorityUpdateInterval = 3; // 低优先级更新频率(每3帧)
+      const mediumPriorityUpdateInterval = 2; // 中优先级更新频率(每2帧)
+
+      // 只在必要时处理动画
+      if (this.animations.size > 0) {
+        // 使用类型化数组，避免频繁GC
+        const completedAnimations: string[] = [];
+        const completionCallbacks: Array<() => void> = [];
+
+        this.animations.forEach((animation, key) => {
+          try {
+            // 使用delta进行平滑动画
+            const completed = animation.update(delta);
+            if (completed) {
+              completedAnimations.push(key);
+              if (typeof animation.onComplete === "function") {
+                completionCallbacks.push(animation.onComplete);
+              }
+            }
+          } catch (error) {
+            console.error(`[SceneManager] 动画'${key}'执行出错:`, error);
+            completedAnimations.push(key);
+          }
+        });
+
+        // 批量删除完成的动画，减少Map操作次数
+        if (completedAnimations.length > 0) {
+          completedAnimations.forEach(key => this.animations.delete(key));
+          // 在下一个微任务中处理回调，避免阻塞主线程
+          if (completionCallbacks.length > 0) {
+            setTimeout(() => {
+              completionCallbacks.forEach(callback => callback());
+            }, 0);
+          }
+        }
+
+        // 如果有动画，每帧都重新渲染
+        this.markNeedsUpdate();
       }
+
+      // 执行必要的高优先级回调 - 例如第一人称视角更新，每帧都更新
+      const highPriorityCallbacks = ["firstPersonView", "cameraFollow"];
+      highPriorityCallbacks.forEach(key => {
+        const callback = this.animationCallbacks.get(key);
+        if (callback) callback(0);
+      });
+
+      // 中优先级回调 - 每2帧更新一次
+      if (this.frameCount % mediumPriorityUpdateInterval === 0) {
+        this.animationCallbacks.forEach((callback, key) => {
+          if (!highPriorityCallbacks.includes(key)) {
+            callback(0);
+          }
+        });
+      }
+
+      // 低优先级更新 - 例如视角模式检查
+      if (this.frameCount % lowPriorityUpdateInterval === 0) {
+        this.ensureViewModes();
+      }
+
+      // 智能渲染：仅在需要时渲染
+      this.smartRender();
+    } catch (error) {
+      console.error("[SceneManager] 帧处理发生错误:", error);
+    }
+  };
+
+  // 优化的智能渲染方法
+  private smartRender(): void {
+    // 优化渲染逻辑，减少不必要的渲染
+    const now = performance.now();
+    const timeSinceLastRender = now - this._lastRenderTime;
+
+    // 强制渲染模式：按照合理的帧率渲染
+    if (this.forceRender) {
+      // 使用默认的60fps(约16.7ms)限制渲染频率，避免过度渲染
+      if (timeSinceLastRender >= 16) {
+        this.doRender();
+        this._lastRenderTime = now;
+      }
+      return;
+    }
+
+    // 非强制模式：只在需要更新且满足最小间隔时才渲染
+    const minRenderInterval = 16; // 约等于60fps，单位毫秒
+    const maxIdleRenderInterval = 300; // 空闲状态最大渲染间隔
+
+    if (
+      (this.needsUpdate && timeSinceLastRender > minRenderInterval) ||
+      // 即使没有needsUpdate标记，也应该偶尔渲染以保持UI响应
+      timeSinceLastRender > maxIdleRenderInterval
+    ) {
+      this.doRender();
+      this._lastRenderTime = now;
       this.needsUpdate = false;
     }
-
-    this.frameCount++;
   }
 
-  private tick = (): void => {
-    requestAnimationFrame(this.tick);
-    const deltaTime = this.clock.getDelta();
-
-    const hasActiveAnimations = this.animations.size > 0;
-
-    // 在强制渲染模式或有活跃动画时更新所有对象
-    if (this.forceRender || hasActiveAnimations) {
-      this.markNeedsUpdate();
+  // 提取渲染代码，避免重复
+  private doRender(): void {
+    if (this.composer) {
+      this.composer.render();
+    } else {
+      this.renderer.render(this.scene, this.camera);
     }
-
-    // 更新动画
-    this.animations.forEach((animation, key) => {
-      const shouldContinue = animation.update(deltaTime);
-      if (!shouldContinue) {
-        this.animations.delete(key);
-      }
-    });
-
-    // 按需更新静态对象
-    this.staticObjects.forEach(id => {
-      const obj = this.objectMap.get(id)?.object;
-      if (obj && obj.userData.version !== obj.userData.lastVersion) {
-        obj.updateMatrixWorld();
-        obj.userData.lastVersion = obj.userData.version;
-      }
-    });
-
-    this.controls.update();
-    this.smartRender();
-  };
+  }
 
   private eventHandlers = new Map<EventType, Set<EventHandler>>();
 
@@ -466,27 +540,55 @@ export class SceneManager {
     return new Promise(resolve => {
       const obj = this.getObject(id);
       if (!obj) {
-        console.warn(`Object ${id} not found`);
+        console.warn(`[SceneManager] 物体 ${id} 不存在，无法移动`);
         return resolve();
       }
 
       const startPosition = obj.position.clone();
+      const distance = startPosition.distanceTo(targetPosition);
       const startTime = this.clock.getElapsedTime();
-
       const animationKey = `move_${id}_${Date.now()}`;
 
+      // 使用基于距离的缓动效果
+      const customEasing = (t: number): number => {
+        // 缓入缓出效果
+        return t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
+      };
+
       this.animations.set(animationKey, {
-        update: (deltaTime: number) => {
+        update: () => {
           const elapsed = this.clock.getElapsedTime() - startTime;
-          const progress = Math.min(elapsed / duration, 1);
+          const rawProgress = Math.min(elapsed / duration, 1);
 
-          obj.position.lerpVectors(startPosition, targetPosition, progress);
+          // 应用缓动效果
+          const progress = customEasing(rawProgress);
 
-          if (progress >= 1) {
+          // 计算当前位置
+          const newPosition = new THREE.Vector3().lerpVectors(
+            startPosition,
+            targetPosition,
+            progress
+          );
+
+          // 设置物体位置
+          obj.position.copy(newPosition);
+
+          // 在每一帧更新时确保视角模式保持正确
+          if (this.frameCount % 3 === 0) {
+            // 降低更新频率，提高性能
+            this.ensureViewModes();
+          }
+
+          // 当动画完成时
+          if (rawProgress >= 1) {
+            // 确保物体精确地位于目标位置
+            obj.position.copy(targetPosition);
             this.animations.delete(animationKey);
             resolve();
             return false;
           }
+
+          // 继续动画
           return true;
         },
         onComplete: resolve,
@@ -521,6 +623,335 @@ export class SceneManager {
   private isAnimating = false;
 
   /**
+   * 设置无人机速度
+   * @param speed 速度倍率
+   */
+  public setDroneSpeed(speed: number): void {
+    // 限制速度范围，避免设置过高的速度导致动画过快
+    this.droneSpeed = Math.max(0.1, Math.min(speed, 5.0));
+    console.log(`[SceneManager] 设置无人机速度为 ${this.droneSpeed}`);
+    // 实际影响smartAnimate中的动画时长
+  }
+
+  /**
+   * 设置第一人称视角
+   * @param objectId 要使用第一人称视角的物体ID
+   */
+  public setFirstPersonView(objectId: string): void {
+    try {
+      const obj = this.getObject(objectId);
+      if (!obj) {
+        console.warn(
+          `[SceneManager] 无法使用第一人称视角: 物体 ${objectId} 不存在`
+        );
+        return;
+      }
+
+      // 清除可能存在的旧状态
+      this.resetCameraFollow();
+
+      console.log(`[SceneManager] 启用第一人称视角, 物体: ${objectId}`);
+
+      // 设置状态
+      this.firstPersonMode = true;
+      this.firstPersonObjectId = objectId;
+
+      // 立即更新一次相机位置和旋转，确保立即生效
+      this.updateFirstPersonView(true);
+
+      // 半禁用控制器 - 仅保留旋转功能
+      this.configureFirstPersonControls();
+
+      // 创建直接绑定摄像机到无人机的更新函数
+      const updateCamera = () => {
+        if (!this.firstPersonMode || !this.firstPersonObjectId) return;
+        this.updateFirstPersonView();
+      };
+
+      // 添加到每帧回调中
+      this.animationCallbacks.set("firstPersonView", updateCamera);
+
+      // 启用强制渲染
+      this.markNeedsUpdate();
+      this.forceRender = true;
+    } catch (error) {
+      console.error("[SceneManager] 设置第一人称视角时出错:", error);
+      this.resetCameraFollow();
+    }
+  }
+
+  /**
+   * 为第一人称视角配置控制器
+   * 允许鼠标控制视角旋转，但不控制位置
+   */
+  private configureFirstPersonControls(): void {
+    if (this.controls) {
+      // 启用旋转，禁用其他功能
+      this.controls.enabled = true;
+      this.controls.enableZoom = false; // 禁用缩放
+      this.controls.enablePan = false; // 禁用平移
+      this.controls.enableRotate = true; // 启用旋转
+      this.controls.enableDamping = true; // 启用阻尼效果使旋转更平滑
+
+      // 限制垂直旋转角度
+      this.controls.minPolarAngle = Math.PI * 0.1; // 限制仰角
+      this.controls.maxPolarAngle = Math.PI * 0.9; // 限制俯角
+
+      // 设置旋转速度
+      this.controls.rotateSpeed = 0.5;
+
+      // 确保控制器不会自动更新目标
+      this.controls.target = new THREE.Vector3(0, 0, -1)
+        .applyQuaternion(this.camera.quaternion)
+        .add(this.camera.position);
+    }
+  }
+
+  /**
+   * 更新第一人称视角相机位置
+   * @private
+   * @param forceLog 是否强制输出日志
+   */
+  private updateFirstPersonView(forceLog: boolean = false): void {
+    if (!this.firstPersonMode || !this.firstPersonObjectId) return;
+
+    try {
+      const droneModel = this.getObject(this.firstPersonObjectId);
+      if (!droneModel) {
+        if (forceLog) {
+          console.warn(
+            `[SceneManager] 第一人称视角物体 ${this.firstPersonObjectId} 不存在，取消视角`
+          );
+        }
+        this.resetCameraFollow();
+        return;
+      }
+
+      // 获取无人机位置和朝向
+      const dronePosition = droneModel.position.clone();
+      const droneQuaternion = droneModel.quaternion.clone();
+
+      // 创建相机偏移量（无人机前方和稍微上方）
+      const cameraOffset = new THREE.Vector3(0, 0.1, -0.2); // 调整偏移，稍微提高高度，增加前进距离
+
+      // 将偏移量应用无人机的旋转
+      cameraOffset.applyQuaternion(droneQuaternion);
+
+      // 计算相机最终位置：无人机位置 + 旋转后的偏移量
+      const cameraPosition = new THREE.Vector3().addVectors(
+        dronePosition,
+        cameraOffset
+      );
+
+      // 更新相机位置，但保留当前相机的旋转
+      const currentRotation = this.camera.quaternion.clone();
+      this.camera.position.copy(cameraPosition);
+
+      // 更新控制器的目标点 - 在相机前方
+      const lookDirection = new THREE.Vector3(0, 0, -1).applyQuaternion(
+        currentRotation
+      );
+      this.controls.target.copy(cameraPosition.clone().add(lookDirection));
+
+      // 确保相机每次正确渲染
+      this.camera.updateProjectionMatrix();
+      this.camera.updateMatrixWorld();
+
+      // 更新控制器
+      this.controls.update();
+
+      // 强制要求渲染
+      this.markNeedsUpdate();
+      this.forceRender = true;
+
+      if (forceLog) {
+        console.log(
+          `[SceneManager] 第一人称视角更新: 位置=${cameraPosition
+            .toArray()
+            .map(v => v.toFixed(2))}`
+        );
+      }
+    } catch (error) {
+      console.error("[SceneManager] 更新第一人称视角时出错:", error);
+    }
+  }
+
+  /**
+   * 确保视角跟随状态在全局持续生效
+   * 此方法应该被定期调用，例如在动画循环或状态更新时
+   */
+  public ensureViewModes(): void {
+    // 优化：降低调用频率，不需要每帧都检查
+    if (this.frameCount % 10 !== 0) return; // 更新为每10帧检查一次，减少开销
+
+    // 如果没有活跃的视角模式，直接返回
+    if (!this.firstPersonMode && !this.followingObjectId) return;
+
+    // 检查第一人称模式
+    if (this.firstPersonMode && this.firstPersonObjectId) {
+      this.updateFirstPersonView();
+    }
+    // 检查跟随模式
+    else if (this.followingObjectId) {
+      this.updateCameraFollow();
+    }
+  }
+
+  /**
+   * 取消相机跟随或第一人称视角
+   */
+  public resetCameraFollow(): void {
+    const wasInFirstPerson = this.firstPersonMode;
+    const wasFollowing = this.followingObjectId !== null;
+
+    // 删除所有相关回调
+    this.animationCallbacks.delete("cameraFollow");
+    this.animationCallbacks.delete("firstPersonView");
+
+    // 重置状态
+    this.followingObjectId = null;
+    this.firstPersonMode = false;
+    this.firstPersonObjectId = null;
+
+    // 重新启用控制器并恢复默认设置
+    if (this.controls) {
+      this.controls.enabled = true;
+      this.controls.enableZoom = true;
+      this.controls.enablePan = true;
+      this.controls.enableRotate = true;
+      this.controls.enableDamping = true;
+      this.controls.maxPolarAngle = Math.PI;
+      this.controls.minPolarAngle = 0;
+      this.controls.rotateSpeed = 1.0; // 重置为默认旋转速度
+    }
+
+    // 只在确实退出某种模式时打印日志
+    if (wasInFirstPerson) {
+      console.log(`[SceneManager] 退出第一人称视角模式`);
+    } else if (wasFollowing) {
+      console.log(`[SceneManager] 相机停止跟随物体`);
+    }
+
+    // 触发一次渲染
+    this.markNeedsUpdate();
+    this.requestRender();
+  }
+
+  /**
+   * 设置相机跟随指定物体（第三人称视角）
+   * @param objectId 要跟随的物体ID
+   */
+  public setCameraFollowObject(objectId: string): void {
+    // 如果当前是第一人称模式，先退出
+    if (this.firstPersonMode) {
+      this.resetCameraFollow();
+    }
+
+    const obj = this.getObject(objectId);
+    if (!obj) {
+      console.warn(`[SceneManager] 无法跟随物体 ${objectId}: 物体不存在`);
+      return;
+    }
+
+    this.followingObjectId = objectId;
+    console.log(`[SceneManager] 相机开始跟随物体 ${objectId}`);
+
+    // 确保每帧更新相机位置
+    if (!this.animationCallbacks.has("cameraFollow")) {
+      this.animationCallbacks.set("cameraFollow", () =>
+        this.updateCameraFollow()
+      );
+    }
+
+    // 立即更新一次相机位置
+    this.updateCameraFollow();
+  }
+
+  /**
+   * 更新相机跟随位置（第三人称）
+   * @private
+   */
+  private updateCameraFollow(): void {
+    if (!this.followingObjectId) return;
+
+    const obj = this.getObject(this.followingObjectId);
+    if (!obj) {
+      console.warn(
+        `[SceneManager] 跟随的物体 ${this.followingObjectId} 不存在，取消跟随`
+      );
+      this.resetCameraFollow();
+      return;
+    }
+
+    // 计算跟随位置（在物体后方稍高的位置）
+    const objectPosition = obj.position.clone();
+    const objectDirection = new THREE.Vector3(0, 0, -1).applyQuaternion(
+      obj.quaternion
+    );
+
+    // 相机位置：物体后方5单位，上方2单位
+    const cameraPosition = objectPosition
+      .clone()
+      .sub(objectDirection.multiplyScalar(5))
+      .add(new THREE.Vector3(0, 2, 0));
+
+    // 立即移动相机，确保实时跟随
+    this.camera.position.copy(cameraPosition);
+
+    // 相机始终看向物体（稍微向上偏移，看到完整无人机）
+    const lookAtPosition = objectPosition
+      .clone()
+      .add(new THREE.Vector3(0, 0.1, 0));
+    this.camera.lookAt(lookAtPosition);
+
+    // 设置控制器的目标为无人机
+    this.controls.target.copy(lookAtPosition);
+
+    // 确保控制器禁用，防止用户干扰跟随效果
+    this.controls.enabled = false;
+
+    // 标记需要更新
+    this.markNeedsUpdate();
+
+    // 每帧请求渲染，确保平滑跟随
+    this.requestRender();
+  }
+
+  /**
+   * 应用物理系统设置
+   * @param settings 物理设置选项
+   */
+  public applyPhysicsSettings(settings: {
+    gravityEnabled: boolean;
+    windStrength: number;
+    windDirection?: THREE.Vector3;
+  }): void {
+    const prevGravityEnabled = this.physicsSettings.gravityEnabled;
+
+    this.physicsSettings = {
+      ...this.physicsSettings,
+      gravityEnabled: settings.gravityEnabled,
+      windStrength: settings.windStrength,
+    };
+
+    // 如果提供了风向，更新风向设置
+    if (settings.windDirection) {
+      this.physicsSettings.windDirection = settings.windDirection
+        .clone()
+        .normalize();
+    }
+
+    console.log(
+      `[SceneManager] 应用物理设置: 重力=${settings.gravityEnabled}, 风力=${settings.windStrength}, ` +
+        `风向=[${this.physicsSettings.windDirection.x.toFixed(
+          2
+        )}, ${this.physicsSettings.windDirection.y.toFixed(
+          2
+        )}, ${this.physicsSettings.windDirection.z.toFixed(2)}]`
+    );
+  }
+
+  /**
    * 增强版动画方法 - 支持连续路径
    * @param id 物体ID
    * @param target 目标位置
@@ -533,43 +964,195 @@ export class SceneManager {
       duration?: number;
       lookAtTarget?: boolean;
       addToQueue?: boolean;
+      applyPhysics?: boolean;
     } = {}
   ): Promise<void> {
-    const { duration = 1, lookAtTarget = true, addToQueue = false } = options;
     const obj = this.getObject(id);
-    if (!obj) return;
+    if (!obj) {
+      console.warn(`[SceneManager] 物体 ${id} 不存在，无法执行动画`);
+      return;
+    }
 
+    // 应用速度修改器到持续时间
+    const {
+      duration = 1 / this.droneSpeed, // 默认1秒，速度越快，持续时间越短
+      lookAtTarget = true,
+      addToQueue = false,
+      applyPhysics = true, // 默认应用物理效果
+    } = options;
+
+    // 记录动画开始时间
+    const startTime = performance.now();
+
+    // 如果是添加到队列，则不立即执行
     if (addToQueue) {
       this.flightQueue.push(target);
       if (!this.isAnimating) this.processQueue(id);
       return;
     }
 
+    // 标记动画状态
     this.isAnimating = true;
 
-    // 方向控制
+    // 应用"物理效果"（实际只是模拟，不改变飞行路径）
+    if (applyPhysics) {
+      this.applySimulatedPhysics(id, target);
+    }
+
+    // 方向控制（先旋转后移动）
     if (lookAtTarget) {
       const startRotation = obj.rotation.clone();
       const targetRotation = this.calculateLookAt(obj.position, target);
-      this.animateRotation(id, startRotation, targetRotation, duration / 2);
+
+      // 旋转时间控制，速度越快旋转越快
+      const rotationDuration = Math.min(duration * 0.4, 0.3); // 最多用40%的时间旋转，但不超过0.3秒
+
+      await this.animateRotation(
+        id,
+        startRotation,
+        targetRotation,
+        rotationDuration
+      );
     }
 
+    // 移动动画
     await this.animateToPosition(id, target, duration);
 
     // 动画完成后添加飞行轨迹点
     try {
       // 确保轨迹正确可见
       this.setTrajectoryVisibility("flight", true);
+
       // 添加轨迹点
       this.addFlightPoint(target.clone());
-      console.log(
-        `[SceneManager] 添加动画结束后的飞行轨迹点: ${target.toArray()}`
-      );
+
+      // 记录动画完成时间和耗时
+      const endTime = performance.now();
+      const timeElapsed = (endTime - startTime) / 1000; // 秒
+
+      if (Math.random() < 0.1) {
+        // 减少日志输出
+        console.log(
+          `[SceneManager] 动画完成: 物体=${id}, 目标=${target
+            .toArray()
+            .map(v => v.toFixed(2))}, 时间=${timeElapsed.toFixed(2)}s`
+        );
+      }
+
+      // 确保视角模式在移动后保持正确
+      this.ensureViewModes();
     } catch (error) {
       console.error("[SceneManager] 添加飞行轨迹点失败:", error);
     }
 
+    // 标记动画结束
     this.isAnimating = false;
+  }
+
+  /**
+   * 应用模拟的物理效果（不实际改变飞行路径）
+   * @param id 物体ID
+   * @param target 目标位置
+   * @private
+   */
+  private applySimulatedPhysics(id: string, target: THREE.Vector3): void {
+    const { gravityEnabled, windStrength, windDirection } =
+      this.physicsSettings;
+
+    // 如果没有启用任何物理效果，直接返回
+    if (!gravityEnabled && windStrength <= 0) return;
+
+    // 减少日志输出频率，降低性能开销
+    const shouldLog = Math.random() < 0.2; // 只有20%的概率输出日志
+
+    if (shouldLog) {
+      console.log(
+        `[SceneManager] 应用物理模拟 - 物体: ${id}, ` +
+          `重力: ${gravityEnabled ? "开启" : "关闭"}, ` +
+          `风力: ${windStrength}, ` +
+          `风向: [${windDirection.x.toFixed(2)}, ${windDirection.y.toFixed(
+            2
+          )}, ${windDirection.z.toFixed(2)}]`
+      );
+    }
+
+    const obj = this.getObject(id);
+    if (!obj) return;
+
+    // 获取物体当前位置和目标位置
+    const startPosition = obj.position.clone();
+    const targetPosition = target.clone();
+    const distance = startPosition.distanceTo(targetPosition);
+
+    // 飞行方向向量
+    const direction = new THREE.Vector3()
+      .subVectors(targetPosition, startPosition)
+      .normalize();
+
+    // 物理偏移量（初始为零）
+    let physicsOffset = new THREE.Vector3(0, 0, 0);
+
+    // 应用重力影响
+    if (gravityEnabled) {
+      // 模拟重力偏移 - 重力会使无人机下降，尤其是在长距离飞行时
+      // 计算受重力影响的程度（与距离成正比，但有上限）
+      const gravityIntensity = Math.min(distance * 0.02, 0.5);
+      const gravityVector = new THREE.Vector3(0, -9.8, 0);
+      const gravityOffset = gravityVector
+        .clone()
+        .normalize()
+        .multiplyScalar(gravityIntensity * 0.2); // 适当缩小影响
+
+      physicsOffset.add(gravityOffset);
+
+      if (shouldLog) {
+        console.log(
+          `[物理模拟] 重力影响: 飞行距离=${distance.toFixed(2)}m, ` +
+            `重力强度=${gravityIntensity.toFixed(2)}, ` +
+            `下降量=${gravityOffset.y.toFixed(2)}m`
+        );
+      }
+    }
+
+    // 应用风力影响
+    if (windStrength > 0) {
+      // 使用设置的风向，而不是随机生成
+      const currentWindDirection = windDirection.clone();
+
+      // 风力强度与距离和设定的风力值成正比
+      const windIntensity = windStrength * Math.min(distance * 0.01, 0.5);
+      const windOffset = currentWindDirection
+        .clone()
+        .multiplyScalar(windIntensity * 0.3); // 适当缩小影响
+
+      physicsOffset.add(windOffset);
+
+      if (shouldLog) {
+        console.log(
+          `[物理模拟] 风力影响: 风向=${currentWindDirection
+            .toArray()
+            .map(v => v.toFixed(2))}, ` +
+            `风力强度=${windIntensity.toFixed(2)}, ` +
+            `偏移量=[${windOffset.x.toFixed(2)}, ${windOffset.y.toFixed(
+              2
+            )}, ${windOffset.z.toFixed(2)}]`
+        );
+      }
+    }
+
+    // 仅在需要时输出理论位置信息
+    if (shouldLog) {
+      // 计算理论上的最终位置
+      const theoreticalPosition = targetPosition.clone().add(physicsOffset);
+
+      console.log(
+        `[物理模拟] 理论路径: 起点=${startPosition
+          .toArray()
+          .map(v => v.toFixed(2))}, ` +
+          `终点=${targetPosition.toArray().map(v => v.toFixed(2))}, ` +
+          `理论终点=${theoreticalPosition.toArray().map(v => v.toFixed(2))}`
+      );
+    }
   }
 
   /**
@@ -583,9 +1166,12 @@ export class SceneManager {
   }
 
   /**
-   * 计算朝向目标的角度
+   * 计算朝向目标的欧拉角
+   * @param current 当前位置
+   * @param target 目标位置
+   * @returns 朝向目标的欧拉角
    */
-  private calculateLookAt(
+  public calculateLookAtEuler(
     current: THREE.Vector3,
     target: THREE.Vector3
   ): THREE.Euler {
@@ -597,6 +1183,17 @@ export class SceneManager {
       Math.atan2(direction.x, direction.z), // Y轴旋转
       0
     );
+  }
+
+  /**
+   * 计算朝向目标的角度（内部使用）
+   * @private
+   */
+  private calculateLookAt(
+    current: THREE.Vector3,
+    target: THREE.Vector3
+  ): THREE.Euler {
+    return this.calculateLookAtEuler(current, target);
   }
 
   /**
@@ -1212,6 +1809,9 @@ export class SceneManager {
    * 调试轨迹状态
    */
   public debugTrajectoryStatus(): void {
+    // 减少调试日志频率
+    if (Math.random() > 0.1) return; // 只有10%的概率输出日志
+
     const flightObj = this.getObject("flight-trajectory");
     const plannedObj = this.getObject("planned-trajectory");
 
@@ -1245,6 +1845,106 @@ export class SceneManager {
     if (this.trajectoryPaths.planned.length >= 2 && !plannedObj) {
       console.log("检测到计划轨迹点存在但轨迹对象缺失，尝试重建...");
       this.renderTrajectory("planned");
+    }
+  }
+
+  /**
+   * 强制刷新所有动画
+   * 当动画系统似乎没有正常工作时调用此方法
+   */
+  public forceRefreshAnimations(): void {
+    console.log(
+      `[SceneManager] 强制刷新动画系统，当前动画数: ${this.animations.size}`
+    );
+
+    // 显示当前所有活跃的动画
+    if (this.animations.size > 0) {
+      console.log("动画列表:", Array.from(this.animations.keys()));
+    }
+
+    // 确保一帧渲染
+    this.markNeedsUpdate();
+    this.forceRender = true;
+
+    // 强制触发一次tick
+    this.tick();
+  }
+
+  /**
+   * 紧急更新无人机模型位置
+   * 当检测到无人机模型无法正常移动时，使用此方法进行强制更新
+   * @param position 目标位置
+   * @param rotation 目标旋转（可选）
+   */
+  public emergencyUpdateDrone(
+    position: THREE.Vector3,
+    rotation?: THREE.Euler
+  ): void {
+    try {
+      // 1. 获取无人机模型
+      const droneModel = this.getObject("drone-model");
+      if (!droneModel) {
+        console.error("[SceneManager] 紧急更新失败：无人机模型不存在");
+        return;
+      }
+
+      // 减少日志输出，仅在有明显变化时输出
+      const oldPosition = droneModel.position.clone();
+      const distance = oldPosition.distanceTo(position);
+
+      // 2. 直接应用位置
+      droneModel.position.copy(position);
+
+      // 3. 如果提供了旋转信息，应用旋转
+      if (rotation) {
+        // 保存旧的旋转以检测变化
+        const oldRotation = droneModel.rotation.clone();
+
+        // 应用新旋转
+        droneModel.rotation.copy(rotation);
+
+        // 确保四元数也被更新 - 这一步很关键
+        droneModel.quaternion.setFromEuler(rotation);
+
+        // 检测旋转是否有明显变化
+        const rotChanged =
+          Math.abs(oldRotation.y - rotation.y) > 0.05 ||
+          Math.abs(oldRotation.x - rotation.x) > 0.05 ||
+          Math.abs(oldRotation.z - rotation.z) > 0.05;
+
+        if (rotChanged && Math.random() < 0.1) {
+          console.log(
+            `[SceneManager] 无人机旋转更新: [${oldRotation.y.toFixed(
+              2
+            )}] -> [${rotation.y.toFixed(2)}]`
+          );
+        }
+      }
+
+      // 4. 记录更新结果（只在明显位移时）
+      if (distance > 0.1 && Math.random() < 0.05) {
+        // 降低日志频率
+        console.log(
+          `[SceneManager] 更新无人机: ${oldPosition
+            .toArray()
+            .map(v => v.toFixed(2))} -> ${position
+            .toArray()
+            .map(v => v.toFixed(2))}`
+        );
+      }
+
+      // 5. 标记需要更新
+      this.markNeedsUpdate();
+      this.forceRender = true; // 强制渲染标记
+
+      // 6. 如果当前是第一人称视角，立即更新相机位置
+      // 注意：我们不影响用户通过鼠标设置的旋转
+      if (this.firstPersonMode && this.firstPersonObjectId === "drone-model") {
+        // 直接调用，无需等待下一帧
+        this.updateFirstPersonView(distance > 0.5); // 只有距离大的移动才记录日志
+      }
+    } catch (error) {
+      console.error("[SceneManager] 紧急更新无人机模型失败:", error);
     }
   }
 }

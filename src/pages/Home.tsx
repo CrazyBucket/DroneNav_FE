@@ -14,6 +14,7 @@ import {
 } from "@/store/state";
 import Render, { RenderHandle } from "@/components/Render/Render";
 import { useSimulationStore } from "@/store/simulationState";
+import { useSettingStore } from "@/store/setting";
 
 type ViewId = "left-pane" | "right-pane";
 const USER_SPLIT_KEY = "user-split-percentage";
@@ -89,6 +90,8 @@ const HomeContent = () => {
   const renderRef = useRef<RenderHandle>(null);
   const { isLoading } = useSimulationStore();
   const [isReady, setIsReady] = useState(false);
+  const { applyAllSettings, followDroneView, firstPersonView, applyViewModes } =
+    useSettingStore();
 
   useEffect(() => {
     const initializeScene = async () => {
@@ -101,6 +104,9 @@ const HomeContent = () => {
 
         // 等待一段时间以确保DOM和Three.js场景完全初始化
         await new Promise(resolve => setTimeout(resolve, 100));
+
+        // 应用所有设置，确保设置在应用程序启动时正确应用
+        applyAllSettings();
 
         // 标记应用程序已准备就绪
         setIsReady(true);
@@ -116,7 +122,27 @@ const HomeContent = () => {
       console.log("清理场景管理器...");
       sceneManagerRef.current = null;
     };
-  }, [containerRef]);
+  }, [containerRef, applyAllSettings]);
+
+  // 确保视角设置在场景加载后正确应用
+  useEffect(() => {
+    if (isReady && sceneManagerRef.current) {
+      // 应用视角设置
+      applyViewModes();
+      console.log("场景准备就绪后再次应用视角设置:", {
+        followDroneView,
+        firstPersonView,
+      });
+    }
+  }, [isReady, followDroneView, firstPersonView, applyViewModes]);
+
+  // 监听模拟状态变化时重新应用视角设置
+  useEffect(() => {
+    if (isReady && !isLoading && sceneManagerRef.current) {
+      // 模拟结束后确保视角设置依然生效
+      applyViewModes();
+    }
+  }, [isLoading, isReady, applyViewModes]);
 
   const layoutRef = useRef(layout);
   useEffect(() => {
