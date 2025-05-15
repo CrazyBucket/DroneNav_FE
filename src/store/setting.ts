@@ -1,10 +1,10 @@
-import { create } from 'zustand';
+import { create } from "zustand";
 
 interface SettingState {
   showDebugView: boolean;
   toggleDebugView: () => void;
   setDebugView: (show: boolean) => void;
-  
+
   // 轨迹显示设置
   showPlannedPath: boolean;
   showRealTimePath: boolean;
@@ -12,11 +12,12 @@ interface SettingState {
   setShowRealTimePath: (show: boolean) => void;
 }
 
-export const useSettingStore = create<SettingState>((set) => ({
+export const useSettingStore = create<SettingState>(set => ({
   showDebugView: false, // 默认不显示调试视图
-  toggleDebugView: () => set((state) => ({ showDebugView: !state.showDebugView })),
+  toggleDebugView: () =>
+    set(state => ({ showDebugView: !state.showDebugView })),
   setDebugView: (show: boolean) => set({ showDebugView: show }),
-  
+
   // 轨迹显示设置
   showPlannedPath: true, // 默认显示计划轨迹
   showRealTimePath: true, // 默认显示实时轨迹
