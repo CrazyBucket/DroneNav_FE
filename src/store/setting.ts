@@ -109,11 +109,54 @@ export const useSettingStore = create<SettingState>((set, get) => ({
   },
   setWindEffect: value => {
     set({ windEffect: value });
-    get().applyPhysicsSettings(); // 自动应用物理设置
+
+    // 增强逻辑：先通知状态更新，然后应用物理设置
+    setTimeout(() => {
+      const state = get();
+      const sceneManager = SceneManager.safeGetInstance();
+
+      // 先应用物理设置
+      state.applyPhysicsSettings();
+
+      // 确保计划轨迹的风力变体可见
+      if (
+        value > 0 &&
+        state.showPlannedPath &&
+        sceneManager.getObject("planned-trajectory")
+      ) {
+        sceneManager.generateWindTrajectory();
+        console.log(`[设置] 风力效果设置为 ${value}，生成风力轨迹`);
+      } else if (value <= 0) {
+        // 如果风力为0，隐藏风力轨迹
+        sceneManager.setTrajectoryVisibility("wind", false);
+        console.log(`[设置] 风力效果设置为 ${value}，隐藏风力轨迹`);
+      }
+    }, 0);
   },
+
   setWindDirection: direction => {
     set({ windDirection: direction });
-    get().applyPhysicsSettings(); // 自动应用物理设置
+
+    // 增强逻辑：先通知状态更新，然后应用物理设置
+    setTimeout(() => {
+      const state = get();
+      const sceneManager = SceneManager.safeGetInstance();
+
+      // 先应用物理设置
+      state.applyPhysicsSettings();
+
+      // 如果风力大于0并且有计划轨迹，则更新风力轨迹
+      if (
+        state.windEffect > 0 &&
+        state.showPlannedPath &&
+        sceneManager.getObject("planned-trajectory")
+      ) {
+        sceneManager.generateWindTrajectory();
+        console.log(
+          `[设置] 风向设置为 [${direction.x}, ${direction.y}, ${direction.z}]，更新风力轨迹`
+        );
+      }
+    }, 0);
   },
 
   // 全局设置应用方法
@@ -143,7 +186,8 @@ export const useSettingStore = create<SettingState>((set, get) => ({
 
   applyPhysicsSettings: () => {
     try {
-      const { gravityEffect, windEffect, windDirection } = get();
+      const { gravityEffect, windEffect, windDirection, showPlannedPath } =
+        get();
       const sceneManager = SceneManager.safeGetInstance();
 
       sceneManager.applyPhysicsSettings({
@@ -158,6 +202,10 @@ export const useSettingStore = create<SettingState>((set, get) => ({
       console.log(
         `[设置] 应用物理设置: 重力=${gravityEffect}, 风力=${windEffect}, 风向=[${windDirection.x}, ${windDirection.y}, ${windDirection.z}]`
       );
+
+      // 控制风力轨迹的可见性 - 只有当有风力且计划轨迹可见时才显示
+      const showWindTrajectory = windEffect > 0 && showPlannedPath;
+      sceneManager.setTrajectoryVisibility("wind", showWindTrajectory);
 
       // 请求渲染更新
       sceneManager.requestRender();
@@ -212,6 +260,15 @@ export const useSettingStore = create<SettingState>((set, get) => ({
       // 设置轨迹可见性
       sceneManager.setTrajectoryVisibility("planned", state.showPlannedPath);
       sceneManager.setTrajectoryVisibility("flight", state.showRealTimePath);
+
+      // 如果有风力且显示计划轨迹，则显示风力轨迹
+      const showWindTrajectory = state.windEffect > 0 && state.showPlannedPath;
+      sceneManager.setTrajectoryVisibility("wind", showWindTrajectory);
+
+      // 确保生成风力轨迹
+      if (state.windEffect > 0) {
+        sceneManager.generateWindTrajectory();
+      }
 
       // 请求渲染更新
       sceneManager.requestRender();

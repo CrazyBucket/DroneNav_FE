@@ -2117,5 +2117,23 @@ export class SceneManager {
     this.renderTrajectory("wind");
     // 请求重新渲染
     this.requestRender();
+    // 强制刷新动画系统
+    this.forceRefreshAnimations();
+
+    // 显示所有轨迹的状态
+    if (shouldLog) {
+      const plannedVisible = this.trajectoryVisible.planned;
+      const windVisible = this.trajectoryVisible.wind;
+      const plannedObj = this.getObject("planned-trajectory");
+      const windObj = this.getObject("wind-trajectory");
+
+      console.log(
+        `[SceneManager] 轨迹状态: 计划轨迹=${
+          plannedVisible ? "可见" : "不可见"
+        }(${plannedObj ? "已创建" : "未创建"}), 风力轨迹=${
+          windVisible ? "可见" : "不可见"
+        }(${windObj ? "已创建" : "未创建"})`
+      );
+    }
   }
 }

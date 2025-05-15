@@ -368,8 +368,13 @@ export const SetTarget: React.FC = () => {
       setIsLoading(true);
       setSimulationStatus("planning");
 
-      // 清除现有轨迹
-      clearPaths();
+      // 清除现有轨迹（如果设置为不保留）
+      if (clearPaths) {
+        scene.clearTrajectories({
+          clearPlanned: true,
+          clearFlight: true,
+        });
+      }
 
       // 应用所有设置（无人机大小、速度等）
       applyAllSettings();
