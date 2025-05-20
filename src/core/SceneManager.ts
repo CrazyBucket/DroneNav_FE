@@ -19,10 +19,10 @@ interface SceneObjectParams {
 export class SceneManager {
   private static instance: SceneManager;
 
-  private scene: THREE.Scene;
-  private camera: THREE.PerspectiveCamera;
-  private renderer: THREE.WebGLRenderer;
-  private controls: OrbitControls;
+  private scene!: THREE.Scene;
+  private camera!: THREE.PerspectiveCamera;
+  private renderer!: THREE.WebGLRenderer;
+  private controls!: OrbitControls;
   private raycaster = new THREE.Raycaster();
   private composer?: EffectComposer;
   private static _isInitialized = false;
@@ -49,6 +49,7 @@ export class SceneManager {
     flight: false,
     wind: false, // 添加风力轨迹可见性控制
   };
+  private trajectories = new Map<string, THREE.Object3D>(); // 添加trajectories属性
 
   private animationCallbacks = new Map<string, FrameRequestCallback>();
   private needsUpdate = true;
@@ -82,7 +83,18 @@ export class SceneManager {
   private _lastRenderTime = 0;
   private animationFrameId: number | null = null;
 
+  // 添加速度控制相关属性
+  private positionQueue: THREE.Vector3[] = []; // 位置队列
+  private isMoving = false; // 是否正在移动
+  private lastMoveTime = 0; // 上次移动时间
+  private moveInterval = 16; // 移动间隔(ms)，约60fps
+  private currentTargetIndex = 0; // 当前目标点索引
+  private moveDistance = 0.5; // 每次移动的距离单位
+
   private constructor(private container: HTMLDivElement) {
+    if (SceneManager._isInitialized) {
+      return;
+    }
     this.scene = this.initScene();
     this.camera = this.initCamera();
     this.renderer = this.initRenderer();
@@ -91,6 +103,66 @@ export class SceneManager {
     SceneManager._isInitialized = true;
     this.initPostProcessing();
     this.tick();
+  }
+
+  public static reset(): void {
+    if (SceneManager.instance) {
+      // 清理现有实例
+      SceneManager.instance.dispose();
+      SceneManager.instance = null!;
+      SceneManager._isInitialized = false;
+    }
+  }
+
+  private dispose(): void {
+    // 停止渲染循环
+    if (this.animationFrameId !== null) {
+      cancelAnimationFrame(this.animationFrameId);
+      this.animationFrameId = null;
+    }
+
+    // 清理资源
+    if (this.renderer) {
+      this.renderer.dispose();
+    }
+    if (this.scene) {
+      this.scene.clear();
+    }
+    if (this.controls) {
+      this.controls.dispose();
+    }
+    if (this.composer) {
+      this.composer.dispose();
+    }
+
+    // 清理事件监听器
+    if (this.visibilityChangeHandler) {
+      document.removeEventListener(
+        "visibilitychange",
+        this.visibilityChangeHandler
+      );
+      this.visibilityChangeHandler = null;
+    }
+
+    // 清理其他资源
+    this.animations.clear();
+    this.animationCallbacks.clear();
+    this.eventHandlers.clear();
+    this.objectMap.clear();
+    this.staticObjects.clear();
+    this.lodObjects.clear();
+    this.persistentObjects.clear();
+    this.trajectoryPaths = {
+      planned: [],
+      flight: [],
+      wind: [],
+    };
+    this.trajectoryVisible = {
+      planned: false,
+      flight: false,
+      wind: false,
+    };
+    this.trajectories.clear();
   }
 
   /* 初始化方法群 */
@@ -283,35 +355,27 @@ export class SceneManager {
   }
 
   public removeObject(id: string, force: boolean = false): void {
-    // 轨迹对象特殊处理，确保不会被意外删除
     if (
       (id === "planned-trajectory" ||
         id === "flight-trajectory" ||
         id === "wind-trajectory") &&
       !force
     ) {
-      console.log(`[SceneManager] 轨迹对象${id}被保护，跳过移除`);
       return;
     }
 
     const params = this.objectMap.get(id);
     if (!params) {
-      console.log(`[SceneManager] 对象 ${id} 不存在，无需移除`);
       return;
     }
 
-    // 检查是否为持久对象，且不是强制移除
     if (
       !force &&
       (this.persistentObjects.has(id) || params.object.userData.persistent)
     ) {
-      console.log(`[SceneManager] 对象 ${id} 被标记为持久显示，跳过移除`);
       return;
     }
 
-    console.log(`[SceneManager] 开始移除对象: ${id}`);
-
-    // 清理资源
     try {
       if (params.lodLevels) {
         params.lodLevels.forEach(([_, obj]) => this.disposeObject(obj));
@@ -322,13 +386,11 @@ export class SceneManager {
 
       this.objectMap.delete(id);
       this.staticObjects.delete(id);
-      this.persistentObjects.delete(id); // 从持久对象集合中移除
+      this.persistentObjects.delete(id);
 
-      // 确保从场景中彻底移除
       let removedCount = 0;
       this.scene.traverse(child => {
         if (child.userData && child.userData.id === id) {
-          console.log(`[SceneManager] 发现残留对象 ${id}，强制移除`);
           if (child.parent) {
             child.parent.remove(child);
             removedCount++;
@@ -336,38 +398,21 @@ export class SceneManager {
         }
       });
 
-      // 如果移除了多个对象，记录日志
-      if (removedCount > 1) {
-        console.warn(
-          `[SceneManager] 清理了${removedCount}个同ID(${id})的对象，可能有重复对象`
-        );
-      }
-
       this.markNeedsUpdate();
-      console.log(`[SceneManager] 对象 ${id} 已成功移除`);
-
-      // 手动请求一次渲染以确保更新
       this.requestRender();
     } catch (error) {
-      console.error(`[SceneManager] 移除对象 ${id} 时出错:`, error);
+      throw new Error(`移除对象 ${id} 时出错: ${error}`);
     }
   }
 
   private disposeObject(obj: THREE.Object3D): void {
     if (!obj) {
-      console.warn("[SceneManager] 尝试清理空对象");
       return;
     }
 
     try {
-      console.log(
-        `[SceneManager] 开始清理对象: ${obj.uuid}, 类型: ${obj.type}`
-      );
-
-      // 移除对象上的所有事件监听器
       if (obj.userData && obj.userData.listeners) {
         for (const event in obj.userData.listeners) {
-          // 使用类型断言处理事件类型
           (obj as any).removeEventListener(
             event as any,
             obj.userData.listeners[event]
@@ -375,22 +420,18 @@ export class SceneManager {
         }
       }
 
-      // 递归遍历所有子对象，确保完全清理
-      const childrenToRemove = [...obj.children]; // 创建副本以防止遍历问题
+      const childrenToRemove = [...obj.children];
       childrenToRemove.forEach(child => {
         this.disposeObject(child);
         obj.remove(child);
       });
 
       if (obj instanceof THREE.Mesh) {
-        // 清理几何体
         if (obj.geometry) {
           obj.geometry.dispose();
-          console.log(`[SceneManager] 清理几何体: ${obj.geometry.uuid}`);
           obj.geometry = null!;
         }
 
-        // 清理材质
         if (Array.isArray(obj.material)) {
           obj.material.forEach(m => {
             this.disposeMaterial(m);
@@ -400,38 +441,28 @@ export class SceneManager {
           this.disposeMaterial(obj.material);
         }
 
-        // 清除引用
         obj.material = null!;
       }
 
-      // 清理动画混合器
       if (obj.userData && obj.userData.mixer) {
         obj.userData.mixer.stopAllAction();
         obj.userData.mixer.uncacheRoot(obj);
         obj.userData.mixer = null;
       }
 
-      // 处理可能的其他类型资源
       if ("dispose" in obj && typeof (obj as any).dispose === "function") {
         (obj as any).dispose();
-        console.log(`[SceneManager] 执行对象自身的dispose方法: ${obj.uuid}`);
       }
 
-      // 从父对象中移除
       if (obj.parent) {
         obj.parent.remove(obj);
       }
 
-      // 从场景中移除
       this.scene.remove(obj);
-
-      // 清除所有引用和用户数据
       obj.userData = {};
       obj.clear();
-
-      console.log(`[SceneManager] 对象清理完成: ${obj.uuid}`);
     } catch (error) {
-      console.error("[SceneManager] 清理对象资源时出错:", error);
+      throw new Error(`清理对象资源时出错: ${error}`);
     }
   }
 
@@ -440,10 +471,8 @@ export class SceneManager {
     if (!material) return;
 
     try {
-      // 使用类型断言处理材质的纹理和相关资源
       const mat = material as any;
 
-      // 安全地处理每种可能的纹理属性
       if (mat.map && typeof mat.map.dispose === "function") {
         mat.map.dispose();
       }
@@ -487,11 +516,9 @@ export class SceneManager {
         mat.roughnessMap.dispose();
       }
 
-      // 最后处理材质本身
       material.dispose();
-      console.log(`[SceneManager] 清理材质: ${material.uuid}`);
     } catch (error) {
-      console.error("[SceneManager] 清理材质时出错:", error);
+      throw new Error(`清理材质时出错: ${error}`);
     }
   }
 
@@ -565,26 +592,23 @@ export class SceneManager {
 
   private tick = (): void => {
     try {
-      // 使用animationFrameId确保不会重复调用tick
+      if (this.animationFrameId !== null) {
+        cancelAnimationFrame(this.animationFrameId);
+      }
       this.animationFrameId = requestAnimationFrame(this.tick);
 
-      // 获取时间增量，用于所有动画和物理计算
       const delta = this.clock.getDelta();
 
-      // 降低动画更新频率，使用变量控制帧率
       this.frameCount++;
-      const lowPriorityUpdateInterval = 3; // 低优先级更新频率(每3帧)
-      const mediumPriorityUpdateInterval = 2; // 中优先级更新频率(每2帧)
+      const lowPriorityUpdateInterval = 3;
+      const mediumPriorityUpdateInterval = 2;
 
-      // 只在必要时处理动画
       if (this.animations.size > 0) {
-        // 使用类型化数组，避免频繁GC
         const completedAnimations: string[] = [];
         const completionCallbacks: Array<() => void> = [];
 
         this.animations.forEach((animation, key) => {
           try {
-            // 使用delta进行平滑动画
             const completed = animation.update(delta);
             if (completed) {
               completedAnimations.push(key);
@@ -593,15 +617,12 @@ export class SceneManager {
               }
             }
           } catch (error) {
-            console.error(`[SceneManager] 动画'${key}'执行出错:`, error);
-            completedAnimations.push(key);
+            throw new Error(`动画'${key}'执行出错: ${error}`);
           }
         });
 
-        // 批量删除完成的动画，减少Map操作次数
         if (completedAnimations.length > 0) {
           completedAnimations.forEach(key => this.animations.delete(key));
-          // 在下一个微任务中处理回调，避免阻塞主线程
           if (completionCallbacks.length > 0) {
             setTimeout(() => {
               completionCallbacks.forEach(callback => callback());
@@ -609,18 +630,15 @@ export class SceneManager {
           }
         }
 
-        // 如果有动画，每帧都重新渲染
         this.markNeedsUpdate();
       }
 
-      // 执行必要的高优先级回调 - 例如第一人称视角更新，每帧都更新
       const highPriorityCallbacks = ["firstPersonView", "cameraFollow"];
       highPriorityCallbacks.forEach(key => {
         const callback = this.animationCallbacks.get(key);
         if (callback) callback(0);
       });
 
-      // 中优先级回调 - 每2帧更新一次
       if (this.frameCount % mediumPriorityUpdateInterval === 0) {
         this.animationCallbacks.forEach((callback, key) => {
           if (!highPriorityCallbacks.includes(key)) {
@@ -629,15 +647,13 @@ export class SceneManager {
         });
       }
 
-      // 低优先级更新 - 例如视角模式检查
       if (this.frameCount % lowPriorityUpdateInterval === 0) {
         this.ensureViewModes();
       }
 
-      // 智能渲染：仅在需要时渲染
       this.smartRender();
     } catch (error) {
-      console.error("[SceneManager] 帧处理发生错误:", error);
+      throw new Error(`帧处理发生错误: ${error}`);
     }
   };
 
@@ -653,6 +669,7 @@ export class SceneManager {
       if (timeSinceLastRender >= 16) {
         this.doRender();
         this._lastRenderTime = now;
+        this.needsUpdate = false; // 重置更新标记
       }
       return;
     }
@@ -668,12 +685,14 @@ export class SceneManager {
     ) {
       this.doRender();
       this._lastRenderTime = now;
-      this.needsUpdate = false;
+      this.needsUpdate = false; // 重置更新标记
     }
   }
 
   // 提取渲染代码，避免重复
   private doRender(): void {
+    if (!this.scene || !this.camera || !this.renderer) return;
+
     if (this.composer) {
       this.composer.render();
     } else {
@@ -708,7 +727,6 @@ export class SceneManager {
     return new Promise(resolve => {
       const obj = this.getObject(id);
       if (!obj) {
-        console.warn(`[SceneManager] 物体 ${id} 不存在，无法移动`);
         return resolve();
       }
 
@@ -717,9 +735,7 @@ export class SceneManager {
       const startTime = this.clock.getElapsedTime();
       const animationKey = `move_${id}_${Date.now()}`;
 
-      // 使用基于距离的缓动效果
       const customEasing = (t: number): number => {
-        // 缓入缓出效果
         return t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
       };
 
@@ -728,35 +744,27 @@ export class SceneManager {
           const elapsed = this.clock.getElapsedTime() - startTime;
           const rawProgress = Math.min(elapsed / duration, 1);
 
-          // 应用缓动效果
           const progress = customEasing(rawProgress);
 
-          // 计算当前位置
           const newPosition = new THREE.Vector3().lerpVectors(
             startPosition,
             targetPosition,
             progress
           );
 
-          // 设置物体位置
           obj.position.copy(newPosition);
 
-          // 在每一帧更新时确保视角模式保持正确
           if (this.frameCount % 3 === 0) {
-            // 降低更新频率，提高性能
             this.ensureViewModes();
           }
 
-          // 当动画完成时
           if (rawProgress >= 1) {
-            // 确保物体精确地位于目标位置
             obj.position.copy(targetPosition);
             this.animations.delete(animationKey);
             resolve();
             return false;
           }
 
-          // 继续动画
           return true;
         },
         onComplete: resolve,
@@ -795,10 +803,8 @@ export class SceneManager {
    * @param speed 速度倍率
    */
   public setDroneSpeed(speed: number): void {
-    // 限制速度范围，避免设置过高的速度导致动画过快
-    this.droneSpeed = Math.max(0.1, Math.min(speed, 5.0));
-    console.log(`[SceneManager] 设置无人机速度为 ${this.droneSpeed}`);
-    // 实际影响smartAnimate中的动画时长
+    this.droneSpeed = Math.max(0.1, Math.min(10, speed));
+    this.moveInterval = 100 / this.droneSpeed;
   }
 
   /**
@@ -809,42 +815,29 @@ export class SceneManager {
     try {
       const obj = this.getObject(objectId);
       if (!obj) {
-        console.warn(
-          `[SceneManager] 无法使用第一人称视角: 物体 ${objectId} 不存在`
-        );
         return;
       }
 
-      // 清除可能存在的旧状态
       this.resetCameraFollow();
 
-      console.log(`[SceneManager] 启用第一人称视角, 物体: ${objectId}`);
-
-      // 设置状态
       this.firstPersonMode = true;
       this.firstPersonObjectId = objectId;
 
-      // 立即更新一次相机位置和旋转，确保立即生效
       this.updateFirstPersonView(true);
 
-      // 半禁用控制器 - 仅保留旋转功能
       this.configureFirstPersonControls();
 
-      // 创建直接绑定摄像机到无人机的更新函数
       const updateCamera = () => {
         if (!this.firstPersonMode || !this.firstPersonObjectId) return;
         this.updateFirstPersonView();
       };
 
-      // 添加到每帧回调中
       this.animationCallbacks.set("firstPersonView", updateCamera);
 
-      // 启用强制渲染
       this.markNeedsUpdate();
       this.forceRender = true;
     } catch (error) {
-      console.error("[SceneManager] 设置第一人称视角时出错:", error);
-      this.resetCameraFollow();
+      throw new Error(`设置第一人称视角时出错: ${error}`);
     }
   }
 
@@ -887,60 +880,40 @@ export class SceneManager {
       const droneModel = this.getObject(this.firstPersonObjectId);
       if (!droneModel) {
         if (forceLog) {
-          console.warn(
-            `[SceneManager] 第一人称视角物体 ${this.firstPersonObjectId} 不存在，取消视角`
-          );
+          this.resetCameraFollow();
         }
-        this.resetCameraFollow();
         return;
       }
 
-      // 获取无人机位置和朝向
       const dronePosition = droneModel.position.clone();
       const droneQuaternion = droneModel.quaternion.clone();
 
-      // 创建相机偏移量（无人机前方和稍微上方）
-      const cameraOffset = new THREE.Vector3(0, 0.1, -0.2); // 调整偏移，稍微提高高度，增加前进距离
+      const cameraOffset = new THREE.Vector3(0, 0.1, -0.2);
 
-      // 将偏移量应用无人机的旋转
       cameraOffset.applyQuaternion(droneQuaternion);
 
-      // 计算相机最终位置：无人机位置 + 旋转后的偏移量
       const cameraPosition = new THREE.Vector3().addVectors(
         dronePosition,
         cameraOffset
       );
 
-      // 更新相机位置，但保留当前相机的旋转
       const currentRotation = this.camera.quaternion.clone();
       this.camera.position.copy(cameraPosition);
 
-      // 更新控制器的目标点 - 在相机前方
       const lookDirection = new THREE.Vector3(0, 0, -1).applyQuaternion(
         currentRotation
       );
       this.controls.target.copy(cameraPosition.clone().add(lookDirection));
 
-      // 确保相机每次正确渲染
       this.camera.updateProjectionMatrix();
       this.camera.updateMatrixWorld();
 
-      // 更新控制器
       this.controls.update();
 
-      // 强制要求渲染
       this.markNeedsUpdate();
       this.forceRender = true;
-
-      if (forceLog) {
-        console.log(
-          `[SceneManager] 第一人称视角更新: 位置=${cameraPosition
-            .toArray()
-            .map(v => v.toFixed(2))}`
-        );
-      }
     } catch (error) {
-      console.error("[SceneManager] 更新第一人称视角时出错:", error);
+      throw new Error(`更新第一人称视角时出错: ${error}`);
     }
   }
 
@@ -972,16 +945,13 @@ export class SceneManager {
     const wasInFirstPerson = this.firstPersonMode;
     const wasFollowing = this.followingObjectId !== null;
 
-    // 删除所有相关回调
     this.animationCallbacks.delete("cameraFollow");
     this.animationCallbacks.delete("firstPersonView");
 
-    // 重置状态
     this.followingObjectId = null;
     this.firstPersonMode = false;
     this.firstPersonObjectId = null;
 
-    // 重新启用控制器并恢复默认设置
     if (this.controls) {
       this.controls.enabled = true;
       this.controls.enableZoom = true;
@@ -990,17 +960,9 @@ export class SceneManager {
       this.controls.enableDamping = true;
       this.controls.maxPolarAngle = Math.PI;
       this.controls.minPolarAngle = 0;
-      this.controls.rotateSpeed = 1.0; // 重置为默认旋转速度
+      this.controls.rotateSpeed = 1.0;
     }
 
-    // 只在确实退出某种模式时打印日志
-    if (wasInFirstPerson) {
-      console.log(`[SceneManager] 退出第一人称视角模式`);
-    } else if (wasFollowing) {
-      console.log(`[SceneManager] 相机停止跟随物体`);
-    }
-
-    // 触发一次渲染
     this.markNeedsUpdate();
     this.requestRender();
   }
@@ -1010,28 +972,23 @@ export class SceneManager {
    * @param objectId 要跟随的物体ID
    */
   public setCameraFollowObject(objectId: string): void {
-    // 如果当前是第一人称模式，先退出
     if (this.firstPersonMode) {
       this.resetCameraFollow();
     }
 
     const obj = this.getObject(objectId);
     if (!obj) {
-      console.warn(`[SceneManager] 无法跟随物体 ${objectId}: 物体不存在`);
       return;
     }
 
     this.followingObjectId = objectId;
-    console.log(`[SceneManager] 相机开始跟随物体 ${objectId}`);
 
-    // 确保每帧更新相机位置
     if (!this.animationCallbacks.has("cameraFollow")) {
       this.animationCallbacks.set("cameraFollow", () =>
         this.updateCameraFollow()
       );
     }
 
-    // 立即更新一次相机位置
     this.updateCameraFollow();
   }
 
@@ -1044,44 +1001,33 @@ export class SceneManager {
 
     const obj = this.getObject(this.followingObjectId);
     if (!obj) {
-      console.warn(
-        `[SceneManager] 跟随的物体 ${this.followingObjectId} 不存在，取消跟随`
-      );
       this.resetCameraFollow();
       return;
     }
 
-    // 计算跟随位置（在物体后方稍高的位置）
     const objectPosition = obj.position.clone();
     const objectDirection = new THREE.Vector3(0, 0, -1).applyQuaternion(
       obj.quaternion
     );
 
-    // 相机位置：物体后方5单位，上方2单位
     const cameraPosition = objectPosition
       .clone()
       .sub(objectDirection.multiplyScalar(5))
       .add(new THREE.Vector3(0, 2, 0));
 
-    // 立即移动相机，确保实时跟随
     this.camera.position.copy(cameraPosition);
 
-    // 相机始终看向物体（稍微向上偏移，看到完整无人机）
     const lookAtPosition = objectPosition
       .clone()
       .add(new THREE.Vector3(0, 0.1, 0));
     this.camera.lookAt(lookAtPosition);
 
-    // 设置控制器的目标为无人机
     this.controls.target.copy(lookAtPosition);
 
-    // 确保控制器禁用，防止用户干扰跟随效果
     this.controls.enabled = false;
 
-    // 标记需要更新
     this.markNeedsUpdate();
 
-    // 每帧请求渲染，确保平滑跟随
     this.requestRender();
   }
 
@@ -1097,23 +1043,12 @@ export class SceneManager {
     this.physicsSettings.gravityEnabled = settings.gravityEnabled;
     this.physicsSettings.windStrength = settings.windStrength;
 
-    // 更新风向设置（如果提供）
     if (settings.windDirection) {
       this.physicsSettings.windDirection = settings.windDirection
         .clone()
         .normalize();
     }
 
-    console.log(
-      `[SceneManager] 应用物理设置: 重力=${settings.gravityEnabled}, 风力=${settings.windStrength}, ` +
-        `风向=[${this.physicsSettings.windDirection.x.toFixed(
-          2
-        )}, ${this.physicsSettings.windDirection.y.toFixed(
-          2
-        )}, ${this.physicsSettings.windDirection.z.toFixed(2)}]`
-    );
-
-    // 当设置更新时，重新生成风力轨迹
     this.generateWindTrajectory();
   }
 
@@ -1135,43 +1070,35 @@ export class SceneManager {
   ): Promise<void> {
     const obj = this.getObject(id);
     if (!obj) {
-      console.warn(`[SceneManager] 物体 ${id} 不存在，无法执行动画`);
       return;
     }
 
-    // 应用速度修改器到持续时间
     const {
-      duration = 1 / this.droneSpeed, // 默认1秒，速度越快，持续时间越短
+      duration = 1 / this.droneSpeed,
       lookAtTarget = true,
       addToQueue = false,
-      applyPhysics = true, // 默认应用物理效果
+      applyPhysics = true,
     } = options;
 
-    // 记录动画开始时间
     const startTime = performance.now();
 
-    // 如果是添加到队列，则不立即执行
     if (addToQueue) {
       this.flightQueue.push(target);
       if (!this.isAnimating) this.processQueue(id);
       return;
     }
 
-    // 标记动画状态
     this.isAnimating = true;
 
-    // 应用"物理效果"（实际只是模拟，不改变飞行路径）
     if (applyPhysics) {
       this.applySimulatedPhysics(id, target);
     }
 
-    // 方向控制（先旋转后移动）
     if (lookAtTarget) {
       const startRotation = obj.rotation.clone();
       const targetRotation = this.calculateLookAt(obj.position, target);
 
-      // 旋转时间控制，速度越快旋转越快
-      const rotationDuration = Math.min(duration * 0.4, 0.3); // 最多用40%的时间旋转，但不超过0.3秒
+      const rotationDuration = Math.min(duration * 0.4, 0.3);
 
       await this.animateRotation(
         id,
@@ -1181,37 +1108,16 @@ export class SceneManager {
       );
     }
 
-    // 移动动画
     await this.animateToPosition(id, target, duration);
 
-    // 动画完成后添加飞行轨迹点
     try {
-      // 确保轨迹正确可见
       this.setTrajectoryVisibility("flight", true);
-
-      // 添加轨迹点
       this.addFlightPoint(target.clone());
-
-      // 记录动画完成时间和耗时
-      const endTime = performance.now();
-      const timeElapsed = (endTime - startTime) / 1000; // 秒
-
-      if (Math.random() < 0.1) {
-        // 减少日志输出
-        console.log(
-          `[SceneManager] 动画完成: 物体=${id}, 目标=${target
-            .toArray()
-            .map(v => v.toFixed(2))}, 时间=${timeElapsed.toFixed(2)}s`
-        );
-      }
-
-      // 确保视角模式在移动后保持正确
       this.ensureViewModes();
     } catch (error) {
-      console.error("[SceneManager] 添加飞行轨迹点失败:", error);
+      throw new Error(`添加飞行轨迹点失败: ${error}`);
     }
 
-    // 标记动画结束
     this.isAnimating = false;
   }
 
@@ -1442,61 +1348,37 @@ export class SceneManager {
    * @param height 高度
    */
   public resize(width: number, height: number): void {
-    console.log(`[SceneManager] resize被调用: ${width}x${height}`);
-
-    // 验证宽高参数
     if (width <= 0 || height <= 0) {
-      console.warn(`[SceneManager] 拒绝无效尺寸: ${width}x${height}`);
       return;
     }
 
-    // 验证尺寸变化幅度
     if (this.renderer) {
       const currentSize = this.renderer.getSize(new THREE.Vector2());
-      // 如果尺寸相同或变化微小，跳过重设大小
       if (currentSize.width === width && currentSize.height === height) {
-        console.log(`[SceneManager] 尺寸未变，跳过resize: ${width}x${height}`);
-        this.requestRender(); // 仍然请求一次渲染以刷新视图
+        this.requestRender();
         return;
       }
-
-      // 记录尺寸变化
-      console.log(
-        `[SceneManager] 尺寸变化: ${currentSize.width}x${currentSize.height} -> ${width}x${height}`
-      );
     }
 
     try {
       if (this.renderer && this.camera) {
-        // 更新渲染器尺寸
         this.renderer.setSize(width, height);
 
-        // 更新相机参数
         if (this.camera) {
-          // 只需要更新透视相机的长宽比
           this.camera.aspect = width / height;
           this.camera.updateProjectionMatrix();
         }
 
-        // 更新控制器
         if (this.controls) {
           this.controls.update();
         }
 
-        // 立即进行一次渲染确保应用尺寸更新
         this.requestRender();
-
-        // 添加额外日志以便调试
-        const finalSize = this.renderer.getSize(new THREE.Vector2());
-        console.log(
-          `[SceneManager] 尺寸设置完成: ${finalSize.width}x${finalSize.height}`
-        );
       }
     } catch (error) {
-      console.error("[SceneManager] resize出错:", error);
+      throw new Error(`resize出错: ${error}`);
     }
 
-    // 标记需要更新
     this.markNeedsUpdate();
   }
 
@@ -1506,6 +1388,13 @@ export class SceneManager {
         throw new Error("Container is required for initializing SceneManager");
       }
       SceneManager.instance = new SceneManager(container);
+    } else if (container && container !== SceneManager.instance.container) {
+      // 如果提供了新的container且与当前container不同，更新container
+      SceneManager.instance.container = container;
+      SceneManager.instance.resize(
+        container.clientWidth,
+        container.clientHeight
+      );
     }
     return SceneManager.instance;
   }
@@ -1746,31 +1635,64 @@ export class SceneManager {
 
   // 设置计划轨迹路径
   public setPlannedPath(points: THREE.Vector3[]): void {
-    // 对比旧路径和新路径，看是否需要触发动画
-    const oldPoints = [...this.trajectoryPaths.planned];
+    // 更新轨迹点数组
     this.trajectoryPaths.planned = points.map(p => p.clone());
 
-    // 路径变化过大，且存在动画实例，触发动画效果
-    if (
-      oldPoints.length > 0 &&
-      points.length > 0 &&
-      oldPoints.length !== points.length
-    ) {
-      // 路径大小改变，执行过渡动画
-      const plannedLine = this.getObject("planned-trajectory") as THREE.Line;
-      if (plannedLine && plannedLine.visible) {
-        const animate = () => {
-          this.removeObject("planned-trajectory", true);
-          this.renderTrajectory("planned");
-        };
+    // 直接渲染计划轨迹
+    const id = "planned-trajectory";
+    const visible = this.trajectoryVisible.planned;
 
-        // 使用requestAnimationFrame保证平滑过渡
-        requestAnimationFrame(animate);
-      }
-    } else {
-      // 直接渲染
-      this.renderTrajectory("planned");
+    // 移除旧的轨迹（如果存在）
+    this.removeObject(id, true);
+
+    // 如果没有足够的点来渲染，直接返回
+    if (points.length < 2 || !visible) {
+      return;
     }
+
+    // 创建计划轨迹
+    const material = new THREE.LineDashedMaterial({
+      color: 0x38b6ff,
+      dashSize: 0.6,
+      gapSize: 0.2,
+      opacity: 0.9,
+      transparent: true,
+      linewidth: 3,
+    });
+
+    // 创建几何体
+    const geometry = new THREE.BufferGeometry();
+    const positions = new Float32Array(points.length * 3);
+    for (let i = 0; i < points.length; i++) {
+      const point = points[i];
+      if (point) {
+        positions[i * 3] = point.x;
+        positions[i * 3 + 1] = point.y;
+        positions[i * 3 + 2] = point.z;
+      }
+    }
+
+    geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+    const line = new THREE.Line(geometry, material);
+    line.computeLineDistances();
+
+    // 添加到场景
+    this.addObject({
+      id,
+      object: line,
+      selectable: false,
+      static: false,
+    });
+
+    // 确保轨迹可见
+    line.visible = visible;
+
+    // 标记为永久对象
+    this.setPersistent(id, true);
+
+    // 强制渲染
+    this.requestRender();
+    this.markNeedsUpdate();
 
     // 当计划路径更新时，重新生成风力轨迹
     this.generateWindTrajectory();
@@ -1786,47 +1708,54 @@ export class SceneManager {
 
   // 添加飞行点
   public addFlightPoint(point: THREE.Vector3): void {
-    // 检查是否是重复点
-    if (this.trajectoryPaths.flight.length > 0) {
-      const lastPoint =
-        this.trajectoryPaths.flight[this.trajectoryPaths.flight.length - 1];
-      if (lastPoint && lastPoint.distanceTo(point) < 0.001) {
-        return; // 忽略几乎相同的点
-      }
-    }
-
     // 添加到轨迹点数组
     this.trajectoryPaths.flight.push(point.clone());
-    console.log(
-      `[SceneManager] 添加飞行点: ${point.x}, ${point.y}, ${point.z}, 当前点数: ${this.trajectoryPaths.flight.length}`
-    );
 
-    // 获取现有轨迹对象
-    const flightLine = this.getObject("flight-trajectory");
+    // 如果点数足够，创建或更新轨迹
+    if (this.trajectoryPaths.flight.length >= 2) {
+      const id = "flight-trajectory";
+      const points = this.trajectoryPaths.flight;
 
-    // 如果轨迹对象存在且轨迹点数量充足，更新现有轨迹
-    if (flightLine) {
-      // 判断对象类型并相应处理
-      if (flightLine instanceof THREE.Line) {
-        const newGeometry = new THREE.BufferGeometry().setFromPoints(
-          this.trajectoryPaths.flight
-        );
-        flightLine.geometry.dispose();
-        flightLine.geometry = newGeometry;
-      } else if (flightLine instanceof THREE.Mesh) {
-        // 如果是Mesh（管道几何体），则需要完全重建
-        this.removeObject("flight-trajectory", true);
-        this.renderTrajectory("flight");
-      }
-    } else if (this.trajectoryPaths.flight.length >= 2) {
-      // 如果轨迹对象不存在但有足够的点，创建新轨迹
-      this.renderTrajectory("flight");
+      // 创建或更新轨迹
+      const material = new THREE.MeshBasicMaterial({
+        color: 0x00ff7f,
+        transparent: true,
+        opacity: 0.9,
+      });
+
+      // 创建弯曲路径
+      const curve = new THREE.CatmullRomCurve3(points);
+
+      // 创建管道几何体
+      const tubeGeometry = new THREE.TubeGeometry(
+        curve,
+        Math.max(20, points.length * 2),
+        0.08,
+        8,
+        false
+      );
+
+      const tube = new THREE.Mesh(tubeGeometry, material);
+
+      // 移除旧的轨迹（如果存在）
+      this.removeObject(id, true);
+
+      // 添加新的轨迹
+      this.addObject({
+        id,
+        object: tube,
+        selectable: false,
+        static: false,
+      });
+
+      // 确保轨迹可见
+      tube.visible = true;
+      this.trajectoryVisible.flight = true;
+
+      // 强制渲染
+      this.requestRender();
+      this.markNeedsUpdate();
     }
-
-    // 强制渲染一次
-    this.requestRender();
-    this.markNeedsUpdate();
-    this.smartRender();
   }
 
   // 设置轨迹可见性
@@ -1834,33 +1763,17 @@ export class SceneManager {
     type: "planned" | "flight" | "wind",
     visible: boolean
   ): void {
-    // 如果可见性状态没有变化，则不需要进一步处理
-    if (this.trajectoryVisible[type] === visible) {
-      return;
-    }
-
-    console.log(
-      `[SceneManager] 设置${
-        type === "planned" ? "计划" : type === "wind" ? "风力" : "飞行"
-      }轨迹可见性: ${visible}`
-    );
-
-    // 更新可见性状态
     this.trajectoryVisible[type] = visible;
-
-    // 直接设置轨迹对象的可见性属性（如果存在）
     const id = `${type}-trajectory`;
     const trajectoryObject = this.getObject(id);
-    if (visible && this.trajectoryPaths[type].length === 0) {
-      this.trajectoryPaths[type] = [new THREE.Vector3(), new THREE.Vector3()];
-    }
+
     if (trajectoryObject) {
       trajectoryObject.visible = visible;
-      // 请求重新渲染以反映可见性变化
       this.requestRender();
-    } else if (visible && this.trajectoryPaths[type].length >= 2) {
-      // 如果轨迹对象不存在，但应该可见并且有足够的点数据，则渲染它
-      this.renderTrajectory(type);
+      this.markNeedsUpdate();
+    } else if (type === "planned" && this.trajectoryPaths.planned.length >= 2) {
+      // 如果计划轨迹对象不存在但有数据，重新渲染
+      this.setPlannedPath(this.trajectoryPaths.planned);
     }
   }
 
@@ -1914,13 +1827,7 @@ export class SceneManager {
     // 如果对象已存在，直接设置可见性
     if (existingObject) {
       existingObject.visible = visible;
-
-      // 如果设置为不可见，或者需要重新渲染，处理相应逻辑
-      if (!visible) {
-        return; // 如果不可见，就直接返回
-      }
-
-      // 移除旧对象，我们将重新创建
+      if (!visible) return;
       this.removeObject(id, true);
     }
 
@@ -1956,10 +1863,7 @@ export class SceneManager {
       });
 
       // 创建三维路径
-      const path = new THREE.Path();
       const pathGeometry = new THREE.BufferGeometry();
-
-      // 使用EdgeGeometry创建更粗的线
       const positions = new Float32Array(points.length * 3);
 
       for (let i = 0; i < points.length; i++) {
@@ -2021,15 +1925,6 @@ export class SceneManager {
     // 确保轨迹在每一帧都被渲染
     this.forceRender = true;
 
-    // 打印轨迹添加信息
-    console.log(
-      `[SceneManager] ${
-        type === "wind" ? "风力" : type === "planned" ? "计划" : "飞行"
-      }轨迹添加${
-        visible ? "且可见" : "但不可见"
-      }, ID=${id}, 颜色=${color.toString(16)}`
-    );
-
     // 标记为永久对象 - 确保不会被意外删除
     this.setPersistent(id, true);
 
@@ -2037,9 +1932,9 @@ export class SceneManager {
     // @ts-ignore: 在类上添加动态属性
     this[`_${id}_permanent_ref`] = object3D;
 
-    // 直接检查是否添加成功
-    const added = this.getObject(id);
-    console.log(`[SceneManager] 轨迹${id}添加${added ? "成功" : "失败"}`);
+    // 强制刷新一次渲染
+    this.requestRender();
+    this.forceRefreshAnimations();
   }
 
   /**
@@ -2145,8 +2040,7 @@ export class SceneManager {
       // 1. 获取无人机模型
       const droneModel = this.getObject("drone-model");
       if (!droneModel) {
-        console.error("[SceneManager] 紧急更新失败：无人机模型不存在");
-        return;
+        throw new Error("紧急更新失败：无人机模型不存在");
       }
 
       // 减少日志输出，仅在有明显变化时输出
@@ -2205,7 +2099,7 @@ export class SceneManager {
         this.updateFirstPersonView(distance > 0.5); // 只有距离大的移动才记录日志
       }
     } catch (error) {
-      console.error("[SceneManager] 紧急更新无人机模型失败:", error);
+      throw new Error(`紧急更新无人机模型失败: ${error}`);
     }
   }
 
@@ -2334,5 +2228,92 @@ export class SceneManager {
     this.renderTrajectory("wind");
     // 请求重新渲染
     this.requestRender();
+  }
+
+  /**
+   * 添加位置到队列
+   * @param position 目标位置
+   */
+  public addPositionToQueue(position: THREE.Vector3): void {
+    if (!position) return;
+    this.positionQueue.push(position.clone());
+    if (!this.isMoving) {
+      this.startMoving();
+    }
+  }
+
+  /**
+   * 开始移动处理
+   */
+  private startMoving(): void {
+    if (this.isMoving || this.positionQueue.length === 0) return;
+    this.isMoving = true;
+    this.lastMoveTime = performance.now();
+    this.processNextMove();
+  }
+
+  /**
+   * 处理下一次移动
+   */
+  private processNextMove(): void {
+    if (!this.isMoving || this.positionQueue.length === 0) {
+      this.isMoving = false;
+      return;
+    }
+
+    const now = performance.now();
+    const elapsed = now - this.lastMoveTime;
+
+    if (elapsed >= this.moveInterval) {
+      const droneModel = this.getObject<THREE.Object3D>("drone-model");
+      if (!droneModel) {
+        this.isMoving = false;
+        return;
+      }
+
+      const targetPosition = this.positionQueue.shift();
+      if (!targetPosition) {
+        this.isMoving = false;
+        return;
+      }
+
+      // 更新无人机位置和朝向
+      const currentPosition = droneModel.position.clone();
+      const direction = new THREE.Vector3().subVectors(
+        targetPosition,
+        currentPosition
+      );
+      if (direction.length() > 0.01) {
+        direction.normalize();
+        const targetRotationY = Math.atan2(direction.x, direction.z);
+        const rotation = new THREE.Euler(
+          droneModel.rotation.x,
+          targetRotationY,
+          droneModel.rotation.z,
+          "XYZ"
+        );
+        this.emergencyUpdateDrone(targetPosition, rotation);
+      } else {
+        this.emergencyUpdateDrone(targetPosition);
+      }
+
+      // 添加轨迹点
+      this.addFlightPoint(targetPosition.clone());
+
+      this.lastMoveTime = now;
+    }
+
+    // 继续处理下一个移动
+    if (this.isMoving) {
+      requestAnimationFrame(() => this.processNextMove());
+    }
+  }
+
+  /**
+   * 清除位置队列
+   */
+  public clearPositionQueue(): void {
+    this.positionQueue = [];
+    this.isMoving = false;
   }
 }

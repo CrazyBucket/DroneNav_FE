@@ -195,74 +195,20 @@ export const SetTarget: React.FC = () => {
         console.error("[SetTarget] 接收到无效的位置数据");
         return;
       }
-      // 减少日志输出，仅在开始和结束时输出详细信息
-      const isFirstPoint =
-        !isPathInitializedRef.current && data.progress?.total;
-      const isLastPoint = data.progress?.current === data.progress?.total;
+
       // 转换当前坐标
       const targetPos = convertCoordinates(data.coordinates);
+
       // 首次接收时初始化计划路径数组
-      if (isFirstPoint) {
+      if (!isPathInitializedRef.current && data.progress?.total) {
         const total = data.progress.total;
         setTotalPoints(total);
         isPathInitializedRef.current = true;
         plannedPathArrayRef.current = Array(total).fill(null);
         console.log(`[SetTarget] 初始化路径数组，总点数: ${total}`);
       }
-      // 更新无人机位置 - 优化移动逻辑
-      try {
-        // 获取无人机对象
-        const droneModel = scene.getObject("drone-model");
-        if (!droneModel) {
-          console.error("[SetTarget] 无人机模型不存在");
-          return;
-        }
-        // 获取当前位置
-        const currentPosition = droneModel.position.clone();
-        // 计算前进方向和旋转角度
-        const direction = new THREE.Vector3().subVectors(
-          targetPos,
-          currentPosition
-        );
-        const distance = direction.length();
 
-        // 只在方向变化明显或距离足够大时才计算新旋转
-        if (distance > 0.01) {
-          // 降低阈值使旋转更敏感
-          // 标准化方向向量
-          direction.normalize();
-          // 计算目标旋转角度（只考虑Y轴旋转，即水平面内的旋转）
-          const targetRotationY = Math.atan2(direction.x, direction.z);
-          // 创建完整的欧拉角，包含无人机当前的X和Z轴旋转
-          // 这样只更新Y轴旋转，保持其他轴的值
-          const currentRotation = droneModel.rotation.clone();
-          const rotation = new THREE.Euler(
-            currentRotation.x,
-            targetRotationY,
-            currentRotation.z,
-            "XYZ"
-          );
-          // 设置无人机朝向和位置
-          scene.emergencyUpdateDrone(targetPos, rotation);
-          // 在距离明显变化时记录旋转值
-          if (isFirstPoint || isLastPoint || Math.random() < 0.02) {
-            // 进一步减少日志输出
-            console.log(
-              `[SetTarget] 无人机朝向: 角度=${(
-                (targetRotationY * 180) /
-                Math.PI
-              ).toFixed(1)}°, 距离=${distance.toFixed(2)}m`
-            );
-          }
-        } else {
-          // 距离太小时只更新位置，不更新旋转
-          scene.emergencyUpdateDrone(targetPos);
-        }
-      } catch (error) {
-        console.error("[SetTarget] 无人机移动失败:", error);
-      }
-
-      // 更新计划路径（虚线）- 精简逻辑
+      // 更新计划路径（虚线）
       if (isPathInitializedRef.current && data.progress?.current) {
         const currentIndex = data.progress.current - 1;
         plannedPathArrayRef.current[currentIndex] = targetPos.clone();
@@ -277,8 +223,8 @@ export const SetTarget: React.FC = () => {
           // 更新路径
           updatePlanned(validPoints);
 
-          // 更新飞行轨迹点
-          updateFlight(targetPos);
+          // 将新位置添加到移动队列
+          scene.addPositionToQueue(targetPos);
 
           // 确保轨迹可见 - 仅在必要时设置
           if (!showPlannedPath || !showRealTimePath) {
@@ -299,7 +245,6 @@ export const SetTarget: React.FC = () => {
     [
       convertCoordinates,
       updatePlanned,
-      updateFlight,
       scene,
       showPlannedPath,
       showRealTimePath,
@@ -388,6 +333,9 @@ export const SetTarget: React.FC = () => {
       };
       document.addEventListener("visibilitychange", enableForcedRender);
 
+      // 设置无人机速度
+      scene.setDroneSpeed(droneSpeed);
+
       // 配置API参数 - 确保场景ID字段正确设置
       const params = {
         current: currentCoordinate,
@@ -432,8 +380,8 @@ export const SetTarget: React.FC = () => {
       };
 
       // 确保轨迹可见性
-      scene.setTrajectoryVisibility("planned", true);
-      scene.setTrajectoryVisibility("flight", true);
+      scene.setTrajectoryVisibility("planned", showPlannedPath);
+      scene.setTrajectoryVisibility("flight", showRealTimePath);
 
       // 正确设置持久性
       scene.setPersistent("planned-trajectory", true);
@@ -448,6 +396,7 @@ export const SetTarget: React.FC = () => {
 
       // 确保场景进行渲染
       scene.requestRender();
+      scene.forceRefreshAnimations();
 
       // 验证响应中是否有WS端点
       if (!response.ws_endpoint) {
@@ -541,8 +490,13 @@ export const SetTarget: React.FC = () => {
         if (data.coordinates) {
           lastPositionRef.current = data.coordinates;
         }
+
         // 处理位置更新
         handlePositionUpdate(data);
+
+        // 强制渲染以确保更新可见
+        scene.forceRefreshAnimations();
+        scene.requestRender();
       };
 
       // 注册事件处理程序
@@ -610,6 +564,8 @@ export const SetTarget: React.FC = () => {
 
         // 任务完成事件
         wsRef.current.subscribe("mission_complete", () => {
+          console.log("任务完成事件触发");
+
           // 如果从未收到过位置更新，确保关闭加载状态
           if (loadingState.hasReceivedPositionUpdate === false) {
             setIsLoading(false);
@@ -624,8 +580,10 @@ export const SetTarget: React.FC = () => {
 
           // 确保在任务完成后仍然可以看到轨迹
           setTimeout(() => {
-            scene.setTrajectoryVisibility("planned", showPlannedPath);
-            scene.setTrajectoryVisibility("flight", showRealTimePath);
+            // 强制设置轨迹可见性
+            scene.setTrajectoryVisibility("planned", true);
+            scene.setTrajectoryVisibility("flight", true);
+
             // 更新起点为终点
             if (lastPositionRef.current) {
               useCoordinatesStore.setState({
@@ -637,13 +595,14 @@ export const SetTarget: React.FC = () => {
             // 完成后关闭强制渲染模式，但继续保持渲染
             scene.setForceRender(false);
             scene.requestRender();
+            scene.forceRefreshAnimations();
 
             // 移除页面可见性监听
             document.removeEventListener(
               "visibilitychange",
               enableForcedRender
             );
-          }, 500); // 增加延迟时间，确保状态更新完成
+          }, 500);
         });
 
         // 错误处理事件
@@ -721,6 +680,8 @@ export const SetTarget: React.FC = () => {
       wsRef.current?.disconnect();
       // 清除标记点
       SceneManager.getInstance().removeObject("user-input-marker");
+      // 清除位置队列
+      SceneManager.getInstance().clearPositionQueue();
       // 确保组件卸载时关闭强制渲染模式
       SceneManager.getInstance().setForceRender(false);
       resetState(); // 组件卸载时重置状态

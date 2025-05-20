@@ -214,8 +214,8 @@ const DroneSettings: React.FC<DroneSettingsProps> = ({ collapsed = false }) => {
             className="flex-1 mr-2"
           />
           <InputNumber
-            min={0.5}
-            max={3}
+            min={0.01}
+            max={5}
             step={0.1}
             value={droneSpeed}
             onChange={v => v !== null && setDroneSpeed(v)}

@@ -97,9 +97,6 @@ const SceneSelector: React.FC<SceneSelectorProps> = ({ renderRef }) => {
       throw new Error(`无效的场景数据: ${response.message || "缺少obstacles"}`);
     }
 
-    // 彻底清理当前场景中的所有物体
-    console.log("彻底清理现有场景对象...");
-
     try {
       // 先获取所有场景对象信息
       const objectsInfo = sceneManager.getAllObjectsInfo();
@@ -239,21 +236,6 @@ const SceneSelector: React.FC<SceneSelectorProps> = ({ renderRef }) => {
       if (response.status === "success") {
         setScenes(response.scenes);
         console.log(`获取到 ${response.scenes.length} 个场景`);
-
-        // 如果有场景，默认选择第一个并立即加载
-        if (response.scenes && response.scenes.length > 0) {
-          const firstSceneId = response.scenes[0]?.id;
-          if (firstSceneId) {
-            console.log(`自动选中并加载第一个场景: ${firstSceneId}`);
-            setSelectedSceneId(firstSceneId);
-            setCurrentSceneId(firstSceneId); // 确保全局状态也更新
-
-            // 延迟一点加载场景，确保状态更新
-            setTimeout(() => {
-              handleSceneSelect(firstSceneId);
-            }, 100);
-          }
-        }
       } else {
         console.error("获取场景列表失败，状态不是success");
         message.error("获取场景列表失败");
