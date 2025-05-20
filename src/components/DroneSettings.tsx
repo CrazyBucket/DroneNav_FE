@@ -164,9 +164,9 @@ const DroneSettings: React.FC<DroneSettingsProps> = ({ collapsed = false }) => {
 
   // 默认尺寸（米转厘米）
   const defaultSize = {
-    width: 25, // 默认宽度25厘米
-    height: 6, // 默认高度6厘米
-    depth: 20, // 默认深度20厘米
+    width: 50,
+    height: 12,
+    depth: 40,
   };
 
   // 若组件处于折叠状态，则不显示具体选项

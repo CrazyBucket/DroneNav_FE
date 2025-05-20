@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { List, Avatar, Spin, Typography, Divider, message } from "antd";
 import { PictureOutlined, AppstoreOutlined } from "@ant-design/icons";
+import * as THREE from "three"; // 添加THREE导入
 import { apis } from "@/services/api";
 import { useSimulationStore } from "@/store/simulationState";
 import { RenderHandle } from "../Render/Render";
@@ -27,8 +28,47 @@ const SceneSelector: React.FC<SceneSelectorProps> = ({ renderRef }) => {
   const [loading, setLoading] = useState(true);
   const [selectedSceneId, setSelectedSceneId] = useState<string | null>(null);
   const [isChangingScene, setIsChangingScene] = useState(false);
-  const { setIsLoading: setSimulationLoading, isLoading } =
-    useSimulationStore();
+  const {
+    setIsLoading: setSimulationLoading,
+    isLoading,
+    currentSceneId,
+    setCurrentSceneId,
+  } = useSimulationStore();
+
+  // 组件挂载时检查全局状态与本地状态的一致性
+  useEffect(() => {
+    // 确保全局状态中有正确的场景ID
+    const checkGlobalState = () => {
+      // 如果全局状态为空但本地状态已有选择，则更新全局状态
+      if (!currentSceneId && selectedSceneId) {
+        console.log(`[SceneSelector] 同步场景ID到全局状态: ${selectedSceneId}`);
+        setCurrentSceneId(selectedSceneId);
+      }
+      // 如果全局状态与本地状态不一致，以全局状态为准
+      else if (currentSceneId && currentSceneId !== selectedSceneId) {
+        console.log(
+          `[SceneSelector] 本地状态(${selectedSceneId})与全局状态(${currentSceneId})不同，以全局状态为准`
+        );
+        setSelectedSceneId(currentSceneId);
+      }
+    };
+
+    // 首次检查
+    checkGlobalState();
+
+    // 创建一个定时器，定期检查确保状态一致
+    const intervalId = setInterval(checkGlobalState, 2000);
+
+    return () => {
+      clearInterval(intervalId);
+    };
+  }, [currentSceneId, selectedSceneId, setCurrentSceneId]);
+
+  // 更新选中场景ID的函数
+  const updateSelectedSceneId = (sceneId: string) => {
+    setSelectedSceneId(sceneId);
+    setCurrentSceneId(sceneId); // 同时更新全局状态
+  };
 
   // 通过场景ID加载新场景
   const loadSceneById = async (sceneId: string) => {
@@ -57,28 +97,133 @@ const SceneSelector: React.FC<SceneSelectorProps> = ({ renderRef }) => {
       throw new Error(`无效的场景数据: ${response.message || "缺少obstacles"}`);
     }
 
-    // 清理当前场景中的所有物体(除了无人机和辅助对象)
-    console.log("清理现有场景...");
-    const objectsInfo = sceneManager.getAllObjectsInfo();
-    for (const obj of objectsInfo) {
-      if (!["drone-model", "axes-helper", "debug-sphere"].includes(obj.id)) {
-        console.log(`删除场景对象: ${obj.id}`);
-        sceneManager.removeObject(obj.id, true); // 强制删除
-      }
-    }
+    // 彻底清理当前场景中的所有物体
+    console.log("彻底清理现有场景对象...");
 
-    // 等待一小段时间确保场景清理完成
-    await new Promise(resolve => setTimeout(resolve, 300));
+    try {
+      // 先获取所有场景对象信息
+      const objectsInfo = sceneManager.getAllObjectsInfo();
+      const obstacleIds = objectsInfo
+        .filter(
+          obj =>
+            !["drone-model", "axes-helper", "debug-sphere"].includes(obj.id)
+        )
+        .map(obj => obj.id);
+
+      console.log(`需要清理 ${obstacleIds.length} 个场景对象`);
+
+      // 使用强制删除模式移除所有对象
+      for (const id of obstacleIds) {
+        console.log(`删除场景对象: ${id}`);
+        sceneManager.removeObject(id, true); // 强制删除
+      }
+
+      // 手动请求执行一次渲染，确保场景已被清空
+      sceneManager.requestRender();
+
+      // 等待一段时间确保对象被完全删除
+      await new Promise(resolve => setTimeout(resolve, 500));
+
+      // 再次检查是否有残留对象
+      const remainingObjects = sceneManager
+        .getAllObjectsInfo()
+        .filter(
+          obj =>
+            !["drone-model", "axes-helper", "debug-sphere"].includes(obj.id)
+        );
+
+      if (remainingObjects.length > 0) {
+        console.warn(`警告: 仍有 ${remainingObjects.length} 个对象未被清理`);
+        // 再次尝试强制清理
+        for (const obj of remainingObjects) {
+          console.log(`强制二次清理: ${obj.id}`);
+          try {
+            // 使用更严格的方式清理
+            const object3D = sceneManager.getObject(obj.id);
+            if (object3D) {
+              // 手动解除所有引用
+              object3D.clear();
+              // 从父级移除
+              if (object3D.parent) {
+                object3D.parent.remove(object3D);
+              }
+              // 分离材质和几何体
+              if (object3D instanceof THREE.Mesh) {
+                if (object3D.geometry) {
+                  object3D.geometry.dispose();
+                }
+                if (object3D.material) {
+                  if (Array.isArray(object3D.material)) {
+                    object3D.material.forEach((m: THREE.Material) =>
+                      m.dispose()
+                    );
+                  } else {
+                    object3D.material.dispose();
+                  }
+                }
+              }
+            }
+
+            // 最后尝试再次通过管理器移除
+            sceneManager.removeObject(obj.id, true);
+          } catch (e) {
+            console.error(`清理对象${obj.id}时出错:`, e);
+          }
+        }
+
+        // 再次请求渲染
+        sceneManager.requestRender();
+        await new Promise(resolve => setTimeout(resolve, 300));
+
+        // 如果仍有残留的对象，记录日志但继续加载新场景
+        const stillRemaining = sceneManager
+          .getAllObjectsInfo()
+          .filter(
+            obj =>
+              !["drone-model", "axes-helper", "debug-sphere"].includes(obj.id)
+          );
+
+        if (stillRemaining.length > 0) {
+          console.error(
+            `警告: 尝试深度清理后仍有 ${stillRemaining.length} 个对象残留`,
+            stillRemaining.map(o => o.id)
+          );
+        }
+      }
+    } catch (cleanupError) {
+      console.error("清理场景对象时出错:", cleanupError);
+      // 继续执行，尝试加载新场景
+    }
 
     // 加载新场景
     console.log(
       `开始将 ${response.scene.obstacles.length} 个障碍物加载到场景...`
     );
-    await loadScene(response.scene.obstacles, sceneManager);
-    console.log("场景加载完成");
 
-    // 请求重新渲染
-    sceneManager.requestRender();
+    try {
+      await loadScene(response.scene.obstacles, sceneManager);
+      console.log("场景加载完成");
+
+      // 请求重新渲染
+      sceneManager.requestRender();
+
+      // 主动触发垃圾回收
+      setTimeout(() => {
+        try {
+          // 使用any类型来处理非标准的gc函数
+          const win = window as any;
+          if (typeof win.gc === "function") {
+            win.gc();
+            console.log("已请求垃圾回收");
+          }
+        } catch (e) {
+          // 忽略错误
+        }
+      }, 1000);
+    } catch (loadError) {
+      console.error("加载新场景时出错:", loadError);
+      throw loadError;
+    }
   };
 
   useEffect(() => {
@@ -95,9 +240,19 @@ const SceneSelector: React.FC<SceneSelectorProps> = ({ renderRef }) => {
         setScenes(response.scenes);
         console.log(`获取到 ${response.scenes.length} 个场景`);
 
-        // 如果有场景，默认选择第一个
-        if (response.scenes && response.scenes.length > 0 && !selectedSceneId) {
-          setSelectedSceneId(response.scenes[0]?.id || "");
+        // 如果有场景，默认选择第一个并立即加载
+        if (response.scenes && response.scenes.length > 0) {
+          const firstSceneId = response.scenes[0]?.id;
+          if (firstSceneId) {
+            console.log(`自动选中并加载第一个场景: ${firstSceneId}`);
+            setSelectedSceneId(firstSceneId);
+            setCurrentSceneId(firstSceneId); // 确保全局状态也更新
+
+            // 延迟一点加载场景，确保状态更新
+            setTimeout(() => {
+              handleSceneSelect(firstSceneId);
+            }, 100);
+          }
         }
       } else {
         console.error("获取场景列表失败，状态不是success");
@@ -119,10 +274,62 @@ const SceneSelector: React.FC<SceneSelectorProps> = ({ renderRef }) => {
 
     try {
       setIsChangingScene(true);
-      console.log(`开始加载场景: ${sceneId}`);
+      console.log(`[SceneSelector] 开始加载场景: ${sceneId}`);
 
-      // 预先更新选中项，提供更好的用户体验
-      setSelectedSceneId(sceneId);
+      // 强制更新全局状态和本地状态
+      console.log(
+        `[SceneSelector] 更新全局状态currentSceneId: ${currentSceneId} -> ${sceneId}`
+      );
+
+      // 使用Promise和重试机制确保状态更新成功
+      const updateStateWithRetry = async () => {
+        // 更新全局状态 - 使用直接访问store实例的方式更新状态，确保即时生效
+        useSimulationStore.setState({ currentSceneId: sceneId });
+
+        // 更新本地状态
+        setSelectedSceneId(sceneId);
+
+        // 给状态更新一点时间
+        await new Promise(resolve => setTimeout(resolve, 100)); // 增加等待时间
+
+        // 验证状态是否成功更新
+        const updatedState = useSimulationStore.getState().currentSceneId;
+        if (updatedState !== sceneId) {
+          console.warn(
+            `[SceneSelector] 状态更新失败！预期=${sceneId}, 实际=${updatedState}`
+          );
+
+          // 再次尝试强制更新 - 使用正确的方式调用setState
+          useSimulationStore.setState({ currentSceneId: sceneId });
+          return false;
+        }
+
+        // 添加额外日志便于调试
+        console.log(`[SceneSelector] 状态更新成功: ${updatedState}`);
+        return true;
+      };
+
+      // 尝试最多5次更新状态 (增加重试次数)
+      let stateUpdated = false;
+      for (let retry = 0; retry < 5 && !stateUpdated; retry++) {
+        if (retry > 0) {
+          console.log(`[SceneSelector] 第${retry + 1}次尝试更新状态...`);
+        }
+        stateUpdated = await updateStateWithRetry();
+
+        // 添加重试间隔
+        if (!stateUpdated && retry < 4) {
+          await new Promise(resolve => setTimeout(resolve, 200));
+        }
+      }
+
+      if (!stateUpdated) {
+        console.error(
+          `[SceneSelector] 无法更新场景状态！加载可能使用了错误的场景!`
+        );
+        // 发出一个错误警告
+        message.warning("场景状态更新异常，请重试");
+      }
 
       // 设置全局加载状态
       setSimulationLoading(true);
@@ -130,18 +337,31 @@ const SceneSelector: React.FC<SceneSelectorProps> = ({ renderRef }) => {
       // 直接使用loadSceneById方法加载场景
       await loadSceneById(sceneId);
 
+      // 最终确认 - 检查全局状态是否与预期一致
+      const finalState = useSimulationStore.getState().currentSceneId;
+      if (finalState !== sceneId) {
+        console.error(
+          `[SceneSelector] 场景加载完成，但状态不一致! 预期=${sceneId}, 实际=${finalState}`
+        );
+        // 最后一次尝试修复 - 使用正确的方式调用setState
+        useSimulationStore.setState({ currentSceneId: sceneId });
+
+        // 验证最后一次修复是否成功
+        const lastCheck = useSimulationStore.getState().currentSceneId;
+        console.log(`[SceneSelector] 最终状态检查: ${lastCheck}`);
+      } else {
+        console.log(`[SceneSelector] 状态一致性验证通过: ${sceneId}`);
+      }
+
       // 加载完成后的处理
       message.success(`场景「${sceneId}」加载成功`);
     } catch (error) {
-      console.error(`加载场景 ${sceneId} 失败:`, error);
+      console.error(`[SceneSelector] 加载场景 ${sceneId} 失败:`, error);
       message.error(
         `加载场景失败: ${error instanceof Error ? error.message : "未知错误"}`
       );
 
-      // 恢复以前的选择
-      if (selectedSceneId && selectedSceneId !== sceneId) {
-        setSelectedSceneId(selectedSceneId);
-      }
+      // 场景加载失败，但仍保持选择的场景ID不变
     } finally {
       // 发生错误时也需要重置加载状态
       setSimulationLoading(false);

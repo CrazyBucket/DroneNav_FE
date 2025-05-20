@@ -11,6 +11,10 @@ interface SimulationState {
   simulationStatus: SimulationStatus;
   setSimulationStatus: (status: SimulationStatus) => void;
 
+  // 当前场景ID
+  currentSceneId: string | null;
+  setCurrentSceneId: (sceneId: string | null) => void;
+
   // 清理状态
   resetState: () => void;
 }
@@ -21,6 +25,9 @@ export const useSimulationStore = create<SimulationState>(set => ({
 
   simulationStatus: "idle",
   setSimulationStatus: simulationStatus => set({ simulationStatus }),
+
+  currentSceneId: null,
+  setCurrentSceneId: currentSceneId => set({ currentSceneId }),
 
   resetState: () =>
     set({

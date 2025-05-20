@@ -284,49 +284,215 @@ export class SceneManager {
 
   public removeObject(id: string, force: boolean = false): void {
     // 轨迹对象特殊处理，确保不会被意外删除
-    if ((id === "planned-trajectory" || id === "flight-trajectory") && !force) {
+    if (
+      (id === "planned-trajectory" ||
+        id === "flight-trajectory" ||
+        id === "wind-trajectory") &&
+      !force
+    ) {
       console.log(`[SceneManager] 轨迹对象${id}被保护，跳过移除`);
       return;
     }
 
     const params = this.objectMap.get(id);
-    if (!params) return;
+    if (!params) {
+      console.log(`[SceneManager] 对象 ${id} 不存在，无需移除`);
+      return;
+    }
 
     // 检查是否为持久对象，且不是强制移除
     if (
       !force &&
       (this.persistentObjects.has(id) || params.object.userData.persistent)
     ) {
-      console.log(`对象 ${id} 被标记为持久显示，跳过移除`);
+      console.log(`[SceneManager] 对象 ${id} 被标记为持久显示，跳过移除`);
       return;
     }
 
-    // 清理资源
-    if (params.lodLevels) {
-      params.lodLevels.forEach(([_, obj]) => this.disposeObject(obj));
-      this.lodObjects.delete(id);
-    } else {
-      this.disposeObject(params.object);
-    }
+    console.log(`[SceneManager] 开始移除对象: ${id}`);
 
-    this.objectMap.delete(id);
-    this.staticObjects.delete(id);
-    this.persistentObjects.delete(id); // 从持久对象集合中移除
-    this.markNeedsUpdate();
+    // 清理资源
+    try {
+      if (params.lodLevels) {
+        params.lodLevels.forEach(([_, obj]) => this.disposeObject(obj));
+        this.lodObjects.delete(id);
+      } else {
+        this.disposeObject(params.object);
+      }
+
+      this.objectMap.delete(id);
+      this.staticObjects.delete(id);
+      this.persistentObjects.delete(id); // 从持久对象集合中移除
+
+      // 确保从场景中彻底移除
+      let removedCount = 0;
+      this.scene.traverse(child => {
+        if (child.userData && child.userData.id === id) {
+          console.log(`[SceneManager] 发现残留对象 ${id}，强制移除`);
+          if (child.parent) {
+            child.parent.remove(child);
+            removedCount++;
+          }
+        }
+      });
+
+      // 如果移除了多个对象，记录日志
+      if (removedCount > 1) {
+        console.warn(
+          `[SceneManager] 清理了${removedCount}个同ID(${id})的对象，可能有重复对象`
+        );
+      }
+
+      this.markNeedsUpdate();
+      console.log(`[SceneManager] 对象 ${id} 已成功移除`);
+
+      // 手动请求一次渲染以确保更新
+      this.requestRender();
+    } catch (error) {
+      console.error(`[SceneManager] 移除对象 ${id} 时出错:`, error);
+    }
   }
 
   private disposeObject(obj: THREE.Object3D): void {
-    obj.traverse(child => {
-      if (child instanceof THREE.Mesh) {
-        child.geometry?.dispose();
-        if (Array.isArray(child.material)) {
-          child.material.forEach(m => m.dispose());
-        } else {
-          child.material?.dispose();
+    if (!obj) {
+      console.warn("[SceneManager] 尝试清理空对象");
+      return;
+    }
+
+    try {
+      console.log(
+        `[SceneManager] 开始清理对象: ${obj.uuid}, 类型: ${obj.type}`
+      );
+
+      // 移除对象上的所有事件监听器
+      if (obj.userData && obj.userData.listeners) {
+        for (const event in obj.userData.listeners) {
+          // 使用类型断言处理事件类型
+          (obj as any).removeEventListener(
+            event as any,
+            obj.userData.listeners[event]
+          );
         }
       }
-    });
-    this.scene.remove(obj);
+
+      // 递归遍历所有子对象，确保完全清理
+      const childrenToRemove = [...obj.children]; // 创建副本以防止遍历问题
+      childrenToRemove.forEach(child => {
+        this.disposeObject(child);
+        obj.remove(child);
+      });
+
+      if (obj instanceof THREE.Mesh) {
+        // 清理几何体
+        if (obj.geometry) {
+          obj.geometry.dispose();
+          console.log(`[SceneManager] 清理几何体: ${obj.geometry.uuid}`);
+          obj.geometry = null!;
+        }
+
+        // 清理材质
+        if (Array.isArray(obj.material)) {
+          obj.material.forEach(m => {
+            this.disposeMaterial(m);
+          });
+          obj.material.length = 0;
+        } else if (obj.material) {
+          this.disposeMaterial(obj.material);
+        }
+
+        // 清除引用
+        obj.material = null!;
+      }
+
+      // 清理动画混合器
+      if (obj.userData && obj.userData.mixer) {
+        obj.userData.mixer.stopAllAction();
+        obj.userData.mixer.uncacheRoot(obj);
+        obj.userData.mixer = null;
+      }
+
+      // 处理可能的其他类型资源
+      if ("dispose" in obj && typeof (obj as any).dispose === "function") {
+        (obj as any).dispose();
+        console.log(`[SceneManager] 执行对象自身的dispose方法: ${obj.uuid}`);
+      }
+
+      // 从父对象中移除
+      if (obj.parent) {
+        obj.parent.remove(obj);
+      }
+
+      // 从场景中移除
+      this.scene.remove(obj);
+
+      // 清除所有引用和用户数据
+      obj.userData = {};
+      obj.clear();
+
+      console.log(`[SceneManager] 对象清理完成: ${obj.uuid}`);
+    } catch (error) {
+      console.error("[SceneManager] 清理对象资源时出错:", error);
+    }
+  }
+
+  // 新增辅助方法：清理材质和纹理
+  private disposeMaterial(material: THREE.Material): void {
+    if (!material) return;
+
+    try {
+      // 使用类型断言处理材质的纹理和相关资源
+      const mat = material as any;
+
+      // 安全地处理每种可能的纹理属性
+      if (mat.map && typeof mat.map.dispose === "function") {
+        mat.map.dispose();
+      }
+      if (mat.lightMap && typeof mat.lightMap.dispose === "function") {
+        mat.lightMap.dispose();
+      }
+      if (mat.bumpMap && typeof mat.bumpMap.dispose === "function") {
+        mat.bumpMap.dispose();
+      }
+      if (mat.normalMap && typeof mat.normalMap.dispose === "function") {
+        mat.normalMap.dispose();
+      }
+      if (mat.specularMap && typeof mat.specularMap.dispose === "function") {
+        mat.specularMap.dispose();
+      }
+      if (mat.envMap && typeof mat.envMap.dispose === "function") {
+        mat.envMap.dispose();
+      }
+      if (mat.alphaMap && typeof mat.alphaMap.dispose === "function") {
+        mat.alphaMap.dispose();
+      }
+      if (mat.aoMap && typeof mat.aoMap.dispose === "function") {
+        mat.aoMap.dispose();
+      }
+      if (
+        mat.displacementMap &&
+        typeof mat.displacementMap.dispose === "function"
+      ) {
+        mat.displacementMap.dispose();
+      }
+      if (mat.emissiveMap && typeof mat.emissiveMap.dispose === "function") {
+        mat.emissiveMap.dispose();
+      }
+      if (mat.gradientMap && typeof mat.gradientMap.dispose === "function") {
+        mat.gradientMap.dispose();
+      }
+      if (mat.metalnessMap && typeof mat.metalnessMap.dispose === "function") {
+        mat.metalnessMap.dispose();
+      }
+      if (mat.roughnessMap && typeof mat.roughnessMap.dispose === "function") {
+        mat.roughnessMap.dispose();
+      }
+
+      // 最后处理材质本身
+      material.dispose();
+      console.log(`[SceneManager] 清理材质: ${material.uuid}`);
+    } catch (error) {
+      console.error("[SceneManager] 清理材质时出错:", error);
+    }
   }
 
   /* 射线检测系统 */
@@ -1270,16 +1436,67 @@ export class SceneManager {
     this.markNeedsUpdate();
   }
 
+  /**
+   * 调整场景大小
+   * @param width 宽度
+   * @param height 高度
+   */
   public resize(width: number, height: number): void {
-    this.renderer.setSize(width, height);
+    console.log(`[SceneManager] resize被调用: ${width}x${height}`);
 
-    this.camera.aspect = width / height;
-    this.camera.updateProjectionMatrix();
-
-    if (this.composer) {
-      this.composer.setSize(width, height);
+    // 验证宽高参数
+    if (width <= 0 || height <= 0) {
+      console.warn(`[SceneManager] 拒绝无效尺寸: ${width}x${height}`);
+      return;
     }
 
+    // 验证尺寸变化幅度
+    if (this.renderer) {
+      const currentSize = this.renderer.getSize(new THREE.Vector2());
+      // 如果尺寸相同或变化微小，跳过重设大小
+      if (currentSize.width === width && currentSize.height === height) {
+        console.log(`[SceneManager] 尺寸未变，跳过resize: ${width}x${height}`);
+        this.requestRender(); // 仍然请求一次渲染以刷新视图
+        return;
+      }
+
+      // 记录尺寸变化
+      console.log(
+        `[SceneManager] 尺寸变化: ${currentSize.width}x${currentSize.height} -> ${width}x${height}`
+      );
+    }
+
+    try {
+      if (this.renderer && this.camera) {
+        // 更新渲染器尺寸
+        this.renderer.setSize(width, height);
+
+        // 更新相机参数
+        if (this.camera) {
+          // 只需要更新透视相机的长宽比
+          this.camera.aspect = width / height;
+          this.camera.updateProjectionMatrix();
+        }
+
+        // 更新控制器
+        if (this.controls) {
+          this.controls.update();
+        }
+
+        // 立即进行一次渲染确保应用尺寸更新
+        this.requestRender();
+
+        // 添加额外日志以便调试
+        const finalSize = this.renderer.getSize(new THREE.Vector2());
+        console.log(
+          `[SceneManager] 尺寸设置完成: ${finalSize.width}x${finalSize.height}`
+        );
+      }
+    } catch (error) {
+      console.error("[SceneManager] resize出错:", error);
+    }
+
+    // 标记需要更新
     this.markNeedsUpdate();
   }
 

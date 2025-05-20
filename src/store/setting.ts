@@ -55,7 +55,7 @@ export const useSettingStore = create<SettingState>((set, get) => ({
   setShowRealTimePath: (show: boolean) => set({ showRealTimePath: show }),
 
   // 无人机物理设置（默认值）
-  droneSize: { width: 0.25, height: 0.06, depth: 0.2 }, // 默认尺寸与后端匹配
+  droneSize: { width: 0.5, height: 0.12, depth: 0.4 }, // 默认尺寸与后端匹配
   droneSpeed: 1.0, // 默认速度为1.0
   followDroneView: false, // 默认不跟随无人机视角
   firstPersonView: false, // 默认不启用第一人称视角

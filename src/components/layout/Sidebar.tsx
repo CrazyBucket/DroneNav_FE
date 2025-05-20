@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef, useState, useCallback } from "react";
 import { Button } from "antd";
 import {
   AppstoreOutlined,
@@ -36,12 +36,52 @@ const Sidebar: React.FC<SidebarProps> = ({
 }) => {
   const [activeArea, setActiveArea] = useState<FunctionArea>("views");
   const { showPlannedPath, showRealTimePath } = useSettingStore();
+  const previousCollapsedRef = useRef(collapsed);
+
+  // 使用useEffect监听场景轨迹可见性变化
   useEffect(() => {
     if (!scene) return;
+
+    // 只有当场景存在时才应用轨迹可见性设置
     scene.setTrajectoryVisibility("planned", showPlannedPath);
     scene.setTrajectoryVisibility("flight", showRealTimePath);
+
+    // 请求一次渲染以更新显示
     scene.requestRender();
-  }, [showPlannedPath, showRealTimePath]);
+  }, [showPlannedPath, showRealTimePath, scene]);
+
+  // 监听折叠状态变化
+  useEffect(() => {
+    // 避免首次渲染时触发
+    if (previousCollapsedRef.current !== collapsed && renderRef?.current) {
+      // 延迟更新场景大小，等待侧边栏动画完成
+      const timer = setTimeout(() => {
+        const container = document.getElementById("scene-container");
+        if (container && renderRef.current) {
+          renderRef.current.resize(
+            container.clientWidth,
+            container.clientHeight
+          );
+        }
+      }, 350); // 等待动画完成
+
+      return () => clearTimeout(timer);
+    }
+
+    // 更新ref值以便下次比较
+    previousCollapsedRef.current = collapsed;
+  }, [collapsed, renderRef]);
+
+  // 处理面板折叠逻辑
+  const handleCollapseClick = useCallback(() => {
+    if (onCollapse) {
+      // 短暂延迟处理以避免事件冲突
+      setTimeout(() => {
+        onCollapse(!collapsed);
+      }, 0);
+    }
+  }, [onCollapse, collapsed]);
+
   const navButtons = [
     {
       key: "views",
@@ -119,11 +159,11 @@ const Sidebar: React.FC<SidebarProps> = ({
           }
           className="mt-auto h-10 flex items-center justify-center transition-all hover:bg-white/15"
           style={{ width: "36px" }}
-          onClick={() => onCollapse?.(!collapsed)}
+          onClick={handleCollapseClick}
         />
       </div>
 
-      {/* 右侧功能区 */}
+      {/* 右侧功能区 - 使用pointer-events-none防止过渡动画期间的交互 */}
       <div
         className={clsx(
           "flex flex-col",
@@ -131,7 +171,9 @@ const Sidebar: React.FC<SidebarProps> = ({
           "shadow-lg shadow-black/10",
           "transition-all duration-300 ease-out",
           "overflow-hidden",
-          collapsed ? "w-0 opacity-0 ml-[-16px]" : "flex-1 opacity-100"
+          collapsed
+            ? "w-0 opacity-0 ml-[-16px] pointer-events-none"
+            : "flex-1 opacity-100"
         )}
         style={{
           minWidth: collapsed ? 0 : `${MIN_RIGHT_PANE_WIDTH}px`,

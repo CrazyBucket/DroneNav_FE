@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import { Mosaic, MosaicNode, MosaicParent } from "react-mosaic-component";
 import Navbar from "@components/layout/Navbar";
 import "react-mosaic-component/react-mosaic-component.css";
@@ -37,8 +37,16 @@ const getInitialState = () => {
   const userSplit = localStorage.getItem(USER_SPLIT_KEY);
 
   const calculateValidSplit = (split: number) => {
-    // 允许更自由的拖拽，仅确保不会导致布局崩溃
-    return Math.min(Math.max(split, 5), 95);
+    // 获取当前窗口宽度
+    const viewportWidth = window.innerWidth;
+
+    // 如果是折叠状态，使用LEFT_NAV_WIDTH而不是MIN_PANE_WIDTH
+    const minSplitPercentage = isCollapsed
+      ? getSplitPercentage(LEFT_NAV_WIDTH)
+      : Math.min((MIN_PANE_WIDTH / viewportWidth) * 100, 45); // 最多占45%，防止过大
+
+    // 确保不会导致布局崩溃
+    return Math.min(Math.max(split, minSplitPercentage), 95);
   };
 
   if (savedLayout) {
@@ -68,18 +76,23 @@ const getInitialState = () => {
     ? (parseFloat(userSplit) * window.innerWidth) / 100
     : LEFT_NAV_WIDTH + DEFAULT_WIDTH;
 
+  // 确保初始宽度不小于MIN_PANE_WIDTH
+  const validInitialWidth = Math.max(initialWidth, MIN_PANE_WIDTH);
+
   return {
     layout: {
       direction: "row",
       first: "left-pane",
       second: "right-pane",
-      splitPercentage: calculateValidSplit(getSplitPercentage(initialWidth)),
+      splitPercentage: calculateValidSplit(
+        getSplitPercentage(validInitialWidth)
+      ),
     } as AppMosaicParent,
     collapsed: isCollapsed,
   };
 };
 
-const HomeContent = () => {
+const HomeContent: React.FC = () => {
   const [layout, setLayout] = useState<AppMosaicParent>(
     getInitialState().layout
   );
@@ -92,6 +105,8 @@ const HomeContent = () => {
   const [isReady, setIsReady] = useState(false);
   const { applyAllSettings, followDroneView, firstPersonView, applyViewModes } =
     useSettingStore();
+  const [resizeMaskVisible, setResizeMaskVisible] = useState(false);
+  const resizeMaskTimeout = useRef<ReturnType<typeof setTimeout>>();
 
   useEffect(() => {
     const initializeScene = async () => {
@@ -149,62 +164,127 @@ const HomeContent = () => {
     layoutRef.current = layout;
   }, [layout]);
 
-  useEffect(() => {
-    if (sceneManagerRef.current) {
-      const container = document.getElementById("scene-container");
-      if (container) {
-        // 短暂延迟以确保DOM更新后再刷新场景大小
-        setTimeout(() => {
-          sceneManagerRef.current?.resize(
-            container.clientWidth,
-            container.clientHeight
-          );
-          sceneManagerRef.current?.requestRender();
-        }, 10);
-      }
-    }
-  }, [layout.splitPercentage]);
+  const updateSceneSize = useCallback(() => {
+    if (!renderRef.current) return;
 
+    const container = document.getElementById("scene-container");
+    if (!container) return;
+
+    const rect = container.getBoundingClientRect();
+    const width = Math.round(rect.width);
+    const height = Math.round(rect.height);
+
+    // 根据折叠状态决定是否使用最小宽度约束
+    // 在折叠状态下，不应该强制最小宽度，应该使用实际宽度
+    const validWidth = collapsed ? width : Math.max(width, SCENE_MIN_WIDTH);
+    const validHeight = Math.max(height, 100);
+
+    console.log(
+      `[Home] 场景容器尺寸：${width}x${height}，调整为：${validWidth}x${validHeight}, 折叠状态: ${collapsed}`
+    );
+
+    // 立即显示遮罩
+    setResizeMaskVisible(true);
+
+    // 使用setTimeout错开渲染时机，避免和布局变化同时发生
+    setTimeout(() => {
+      // 传入immediate参数为true，跳过防抖逻辑
+      renderRef.current?.resize(validWidth, validHeight);
+
+      // 延迟隐藏遮罩
+      if (resizeMaskTimeout.current) {
+        clearTimeout(resizeMaskTimeout.current);
+      }
+      resizeMaskTimeout.current = setTimeout(() => {
+        setResizeMaskVisible(false);
+      }, 300); // 减少遮罩时间，提高响应速度
+    }, 50);
+  }, [collapsed]);
+
+  // 布局变化时更新场景大小
   useEffect(() => {
+    // 等待布局动画完成后再调整大小
+    setTimeout(updateSceneSize, 100);
+  }, [layout.splitPercentage, updateSceneSize]);
+
+  // 监听窗口大小变化
+  useEffect(() => {
+    // 计算当前窗口下的最小分割比例
+    const calculateMinSplitPercentage = () => {
+      const viewportWidth = window.innerWidth;
+
+      // 如果是折叠状态，使用LEFT_NAV_WIDTH而不是MIN_PANE_WIDTH
+      return collapsed
+        ? getSplitPercentage(LEFT_NAV_WIDTH)
+        : Math.min((MIN_PANE_WIDTH / viewportWidth) * 100, 45);
+    };
+
+    // 精确计算并限制布局比例
     const handleResize = () => {
       const viewportWidth = window.innerWidth;
       const currentSplit = layoutRef.current.splitPercentage;
+      const minSplitPercentage = calculateMinSplitPercentage();
 
-      // 仅在折叠状态下应用最小宽度约束
-      if (collapsed) {
-        // 计算有效分割比例
-        const rightWidth = ((100 - currentSplit) / 100) * viewportWidth;
-        let newSplit = currentSplit;
-        if (rightWidth < SCENE_MIN_WIDTH) {
-          newSplit = Math.max(
-            0,
-            ((viewportWidth - SCENE_MIN_WIDTH) / viewportWidth) * 100
-          );
-        }
-
+      // 检查是否需要调整左侧面板宽度
+      if (currentSplit < minSplitPercentage) {
+        console.log(
+          `[Home] 窗口大小变化，调整左侧面板比例: ${currentSplit.toFixed(
+            2
+          )}% -> ${minSplitPercentage.toFixed(2)}%`
+        );
         setLayout(prev => ({
           ...prev,
-          splitPercentage: newSplit,
+          splitPercentage: minSplitPercentage,
         }));
       }
 
-      // 更新场景尺寸
-      if (sceneManagerRef.current) {
-        const container = document.getElementById("scene-container");
-        if (container) {
-          sceneManagerRef.current.resize(
-            container.clientWidth,
-            container.clientHeight
-          );
+      // 确保右侧面板不小于最小宽度
+      const sceneWidthPercent = 100 - currentSplit;
+      const sceneWidthPx = (sceneWidthPercent / 100) * viewportWidth;
+
+      if (sceneWidthPx < SCENE_MIN_WIDTH) {
+        // 计算新的分割比例，确保右侧宽度达到最小要求
+        const newSplit = Math.max(
+          0,
+          100 - (SCENE_MIN_WIDTH / viewportWidth) * 100
+        );
+
+        // 只在变化明显时更新布局
+        if (Math.abs(newSplit - currentSplit) > 0.5) {
+          setLayout(prev => ({
+            ...prev,
+            splitPercentage: newSplit,
+          }));
         }
       }
+
+      // 更新场景尺寸但不要立即执行
+      setTimeout(updateSceneSize, 100);
     };
 
+    // 添加防抖的窗口尺寸变化处理
+    let resizeTimer: ReturnType<typeof setTimeout>;
+    const debouncedResize = () => {
+      clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(handleResize, 200);
+    };
+
+    window.addEventListener("resize", debouncedResize);
+
+    // 初始执行一次
     handleResize();
 
-    window.addEventListener("resize", handleResize);
-    return () => window.removeEventListener("resize", handleResize);
-  }, [collapsed]);
+    return () => {
+      window.removeEventListener("resize", debouncedResize);
+      clearTimeout(resizeTimer);
+    };
+  }, [collapsed, updateSceneSize]);
+
+  // 监听面板收起/展开状态变化
+  useEffect(() => {
+    // 面板状态变化后，给予足够延迟再调整场景大小
+    setTimeout(updateSceneSize, 350); // 略大于ANIMATION_DURATION以确保动画完成
+  }, [collapsed, updateSceneSize]);
 
   // 保存布局
   useEffect(() => {
@@ -212,7 +292,45 @@ const HomeContent = () => {
     localStorage.setItem("sidebar-collapsed", String(collapsed));
   }, [layout, collapsed]);
 
+  // 创建一个直接处理场景大小的函数，不依赖于updateSceneSize
+  const forceUpdateSceneSize = useCallback(() => {
+    if (!renderRef.current) return;
+
+    try {
+      const container = document.getElementById("scene-container");
+      if (!container) {
+        console.error("[Home] 无法找到scene-container元素");
+        return;
+      }
+
+      // 通过DOM获取实际容器大小
+      const rect = container.getBoundingClientRect();
+      const width = Math.round(rect.width);
+      const height = Math.round(rect.height);
+
+      // 根据折叠状态决定是否使用最小宽度约束
+      const validWidth = collapsed ? width : Math.max(width, SCENE_MIN_WIDTH);
+      const validHeight = Math.max(height, 100);
+
+      console.log(
+        `[Home] 强制更新场景大小: 实际=${width}x${height}, 使用=${validWidth}x${validHeight}, 折叠状态: ${collapsed}`
+      );
+
+      // 直接调用Render组件的resize方法
+      renderRef.current.resize(validWidth, validHeight);
+    } catch (error) {
+      console.error("[Home] 强制更新场景大小时出错:", error);
+    }
+  }, [renderRef, collapsed]);
+
+  // 处理折叠/展开面板
   const handleCollapse = (newCollapsed: boolean) => {
+    // 显示遮罩层但不应阻碍交互
+    setResizeMaskVisible(true);
+
+    // 记录变化前的状态用于日志
+    const prevCollapsed = collapsed;
+
     const userSplit = localStorage.getItem(USER_SPLIT_KEY);
     const target = newCollapsed
       ? getSplitPercentage(LEFT_NAV_WIDTH)
@@ -220,15 +338,20 @@ const HomeContent = () => {
       ? parseFloat(userSplit)
       : getSplitPercentage(LEFT_NAV_WIDTH + DEFAULT_WIDTH);
 
-    animateLayout(target);
+    // 设置状态
     setCollapsed(newCollapsed);
     localStorage.setItem("sidebar-collapsed", String(newCollapsed));
-  };
 
-  const animateLayout = (targetPercentage: number) => {
+    console.log(
+      `[Home] 面板折叠状态改变: ${prevCollapsed} -> ${newCollapsed}, 目标分割比例: ${target.toFixed(
+        2
+      )}%`
+    );
+
+    // 使用带动画的布局变化
     isAnimating.current = true;
     const startTime = Date.now();
-    const startPercentage = layoutRef.current.splitPercentage; // 使用 ref 获取最新值
+    const startPercentage = layoutRef.current.splitPercentage;
     let animationFrame: number;
 
     const tick = () => {
@@ -237,7 +360,7 @@ const HomeContent = () => {
       const easedProgress = easingFunction(progress);
 
       const newPercentage =
-        startPercentage + (targetPercentage - startPercentage) * easedProgress;
+        startPercentage + (target - startPercentage) * easedProgress;
 
       setLayout(prev => ({
         ...prev,
@@ -249,41 +372,66 @@ const HomeContent = () => {
       } else {
         isAnimating.current = false;
 
-        // 动画结束后，确保场景尺寸得到更新
-        if (sceneManagerRef.current) {
-          const container = document.getElementById("scene-container");
-          if (container) {
-            sceneManagerRef.current.resize(
-              container.clientWidth,
-              container.clientHeight
-            );
-            sceneManagerRef.current.requestRender();
-          }
-        }
+        // 动画结束后多次强制更新场景大小以确保正确
+        console.log(`[Home] 折叠动画完成，即将更新场景大小`);
+
+        // 延迟执行，等待布局完全更新
+        setTimeout(() => {
+          // 连续执行多次强制更新
+          forceUpdateSceneSize();
+
+          setTimeout(() => {
+            forceUpdateSceneSize();
+
+            setTimeout(() => {
+              forceUpdateSceneSize();
+
+              // 最后延迟隐藏遮罩
+              setTimeout(() => {
+                setResizeMaskVisible(false);
+              }, 200);
+            }, 300);
+          }, 200);
+        }, 150);
       }
     };
 
     animationFrame = requestAnimationFrame(tick);
-    return () => {
-      cancelAnimationFrame(animationFrame);
-      isAnimating.current = false; // 确保在清理时也重置动画状态
-    };
   };
 
   const handleLayoutChange = (newNode: AppMosaicNode | null) => {
+    if (!newNode || typeof newNode === "string") return;
+
+    // 阻止动画过程中的布局变化
     if (isAnimating.current) return;
-    if (newNode && typeof newNode !== "string") {
-      const validNode = newNode as AppMosaicParent;
 
-      // 存储用户的分割比例，但不强制修改
-      if (!collapsed) {
-        localStorage.setItem(
-          USER_SPLIT_KEY,
-          validNode.splitPercentage.toString()
-        );
-      }
+    const validNode = newNode as AppMosaicParent;
 
-      setLayout(validNode);
+    // 验证分割百分比
+    const viewportWidth = window.innerWidth;
+    const minSplitPercentage = collapsed
+      ? getSplitPercentage(LEFT_NAV_WIDTH)
+      : Math.min((MIN_PANE_WIDTH / viewportWidth) * 100, 45);
+    const maxSplitPercentage = 100 - (SCENE_MIN_WIDTH / viewportWidth) * 100;
+
+    // 确保分割比例在有效范围内
+    const validSplit = Math.min(
+      Math.max(validNode.splitPercentage, minSplitPercentage),
+      maxSplitPercentage
+    );
+
+    // 只在变化明显时更新布局
+    if (Math.abs(validSplit - layout.splitPercentage) > 0.5) {
+      setLayout(prev => ({
+        ...prev,
+        splitPercentage: validSplit,
+      }));
+
+      // 保存用户的分割比例
+      localStorage.setItem(USER_SPLIT_KEY, validSplit.toString());
+
+      // 立即触发一次场景大小更新
+      setTimeout(forceUpdateSceneSize, 50);
     }
   };
 
@@ -299,6 +447,109 @@ const HomeContent = () => {
       }
     }
   }, [isLoading]);
+
+  // 在组件挂载时添加Mosaic布局变化的监听
+  useEffect(() => {
+    let isDragging = false;
+    let hasResized = false;
+
+    // 监听鼠标按下事件，标记开始拖动
+    const handleMouseDown = (e: MouseEvent) => {
+      // 检查是否点击在分隔线上
+      const target = e.target as HTMLElement;
+      if (
+        target.classList.contains("mosaic-split") ||
+        target.classList.contains("mosaic-split-line")
+      ) {
+        isDragging = true;
+        hasResized = false;
+        setResizeMaskVisible(true);
+      }
+    };
+
+    // 监听鼠标移动事件，处理拖动中
+    const handleMouseMove = () => {
+      if (isDragging) {
+        hasResized = true;
+
+        // 更新遮罩位置，确保它始终只覆盖右侧场景区域
+        const mask = document.getElementById("scene-mask");
+        if (mask && !collapsed) {
+          const width = `calc(100% - ${
+            (layout.splitPercentage * window.innerWidth) / 100
+          }px)`;
+          mask.style.width = width;
+        }
+      }
+    };
+
+    // 监听鼠标释放事件，处理拖动结束
+    const handleMouseUp = () => {
+      if (!isDragging) return;
+
+      isDragging = false;
+
+      if (hasResized) {
+        // 连续多次更新场景大小，确保最终生效
+        console.log("[Home] 拖动结束，开始更新场景大小");
+
+        // 立即第一次更新
+        forceUpdateSceneSize();
+
+        // 间隔100ms第二次更新
+        setTimeout(() => {
+          forceUpdateSceneSize();
+
+          // 间隔300ms第三次更新
+          setTimeout(() => {
+            forceUpdateSceneSize();
+
+            // 完成后延迟隐藏遮罩
+            setTimeout(() => {
+              setResizeMaskVisible(false);
+            }, 200);
+          }, 300);
+        }, 100);
+      } else {
+        // 如果没有实际拖动，立即隐藏遮罩
+        setResizeMaskVisible(false);
+      }
+    };
+
+    // 监听窗口大小变化
+    const handleWindowResize = () => {
+      // 当窗口大小变化时，确保场景大小正确更新
+      console.log("[Home] 窗口大小变化");
+
+      // 立即显示遮罩
+      setResizeMaskVisible(true);
+
+      // 连续更新几次，确保场景大小正确
+      forceUpdateSceneSize();
+
+      setTimeout(() => {
+        forceUpdateSceneSize();
+
+        setTimeout(() => {
+          forceUpdateSceneSize();
+          setResizeMaskVisible(false);
+        }, 300);
+      }, 200);
+    };
+
+    // 添加事件监听器
+    document.addEventListener("mousedown", handleMouseDown);
+    document.addEventListener("mousemove", handleMouseMove);
+    document.addEventListener("mouseup", handleMouseUp);
+    window.addEventListener("resize", handleWindowResize);
+
+    return () => {
+      document.removeEventListener("mousedown", handleMouseDown);
+      document.removeEventListener("mousemove", handleMouseMove);
+      document.removeEventListener("mouseup", handleMouseUp);
+      window.removeEventListener("resize", handleWindowResize);
+    };
+  }, [forceUpdateSceneSize, layout.splitPercentage, collapsed]);
 
   return (
     <div className="h-screen flex flex-col">
@@ -334,7 +585,11 @@ const HomeContent = () => {
               collapsed
                 ? "DISABLED"
                 : {
-                    minimumPaneSizePercentage: 5,
+                    // 设置比例约束
+                    minimumPaneSizePercentage: Math.min(
+                      (MIN_PANE_WIDTH / window.innerWidth) * 100,
+                      45
+                    ),
                   }
             }
           />
@@ -344,7 +599,7 @@ const HomeContent = () => {
   );
 };
 
-const Home = () => {
+const Home: React.FC = () => {
   return (
     <SceneProvider>
       <HomeContent />

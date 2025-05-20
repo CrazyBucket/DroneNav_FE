@@ -158,6 +158,7 @@ export const SetTarget: React.FC = () => {
     simulationStatus,
     setSimulationStatus,
     resetState,
+    currentSceneId,
   } = useSimulationStore();
   const {
     showPlannedPath,
@@ -194,25 +195,12 @@ export const SetTarget: React.FC = () => {
         console.error("[SetTarget] 接收到无效的位置数据");
         return;
       }
-
       // 减少日志输出，仅在开始和结束时输出详细信息
       const isFirstPoint =
         !isPathInitializedRef.current && data.progress?.total;
       const isLastPoint = data.progress?.current === data.progress?.total;
-
-      if (isFirstPoint || isLastPoint || Math.random() < 0.05) {
-        // 降低日志频率从10%到5%
-        console.log("[SetTarget] 位置更新:", {
-          坐标: data.coordinates,
-          进度: data.progress
-            ? `${data.progress.current}/${data.progress.total}`
-            : "未知",
-        });
-      }
-
       // 转换当前坐标
       const targetPos = convertCoordinates(data.coordinates);
-
       // 首次接收时初始化计划路径数组
       if (isFirstPoint) {
         const total = data.progress.total;
@@ -221,7 +209,6 @@ export const SetTarget: React.FC = () => {
         plannedPathArrayRef.current = Array(total).fill(null);
         console.log(`[SetTarget] 初始化路径数组，总点数: ${total}`);
       }
-
       // 更新无人机位置 - 优化移动逻辑
       try {
         // 获取无人机对象
@@ -230,10 +217,8 @@ export const SetTarget: React.FC = () => {
           console.error("[SetTarget] 无人机模型不存在");
           return;
         }
-
         // 获取当前位置
         const currentPosition = droneModel.position.clone();
-
         // 计算前进方向和旋转角度
         const direction = new THREE.Vector3().subVectors(
           targetPos,
@@ -246,10 +231,8 @@ export const SetTarget: React.FC = () => {
           // 降低阈值使旋转更敏感
           // 标准化方向向量
           direction.normalize();
-
           // 计算目标旋转角度（只考虑Y轴旋转，即水平面内的旋转）
           const targetRotationY = Math.atan2(direction.x, direction.z);
-
           // 创建完整的欧拉角，包含无人机当前的X和Z轴旋转
           // 这样只更新Y轴旋转，保持其他轴的值
           const currentRotation = droneModel.rotation.clone();
@@ -259,10 +242,8 @@ export const SetTarget: React.FC = () => {
             currentRotation.z,
             "XYZ"
           );
-
           // 设置无人机朝向和位置
           scene.emergencyUpdateDrone(targetPos, rotation);
-
           // 在距离明显变化时记录旋转值
           if (isFirstPoint || isLastPoint || Math.random() < 0.02) {
             // 进一步减少日志输出
@@ -364,6 +345,25 @@ export const SetTarget: React.FC = () => {
         resetState();
       }
 
+      // 获取最新的场景ID - 确保使用当前选择的场景
+      const currentSelectedSceneId =
+        useSimulationStore.getState().currentSceneId;
+
+      // 增加场景ID验证和日志
+      console.log(
+        `[SetTarget] 当前选择的全局场景ID: ${
+          currentSelectedSceneId || "未设置"
+        }`
+      );
+
+      if (!currentSelectedSceneId) {
+        console.warn("[SetTarget] 警告：未选择场景，将使用默认场景");
+      } else {
+        console.log(
+          `[SetTarget] 使用当前选择的场景: ${currentSelectedSceneId}`
+        );
+      }
+
       // 设置加载状态
       setIsLoading(true);
       setSimulationStatus("planning");
@@ -388,18 +388,40 @@ export const SetTarget: React.FC = () => {
       };
       document.addEventListener("visibilitychange", enableForcedRender);
 
-      // 配置API参数
+      // 配置API参数 - 确保场景ID字段正确设置
       const params = {
         current: currentCoordinate,
         target: coordinates,
         speed: droneSpeed,
         droneSize: droneSize,
+        scene_id: currentSelectedSceneId || undefined, // 使用最新获取的场景ID
       };
 
+      // 详细记录API请求信息
+      console.log(
+        "[SetTarget] 开始请求路径规划, 参数:",
+        JSON.stringify(params, null, 2)
+      );
+      console.log(
+        `[SetTarget] 当前场景ID: ${
+          currentSelectedSceneId || "未设置 (将使用默认场景)"
+        }`
+      );
+
+      // 调用API之前再次确认场景ID
+      console.log(
+        `[SetTarget] API请求前确认场景ID: ${params.scene_id || "未设置"}`
+      );
+
       // 调用API
-      console.log("[SetTarget] 开始请求路径规划, 参数:", params);
       const response = await apis.startSimulation(params);
-      console.log("[SetTarget] 路径规划响应:", response);
+
+      // 请求后的详细日志
+      console.log(
+        `[SetTarget] 路径规划响应: ${response.status}, 任务ID: ${
+          response.task_id
+        }, 当前场景ID: ${currentSelectedSceneId || "默认"}`
+      );
 
       // 储存临时状态
       const loadingState = {
@@ -506,26 +528,7 @@ export const SetTarget: React.FC = () => {
         if (loadingState.isFirstUpdate) {
           loadingState.isFirstUpdate = false;
           loadingState.hasReceivedPositionUpdate = true;
-
-          // 计算加载动画已显示时间，确保至少显示最小时间
-          const loadingElapsed = Date.now() - loadingState.loadingStartTime;
-          const remainingTime = Math.max(
-            0,
-            loadingState.minimumLoadingTime - loadingElapsed
-          );
-
-          // 立即关闭加载状态，或在很短延迟后关闭
-          if (remainingTime <= 50) {
-            setIsLoading(false);
-            safeMessage.success("无人机开始飞行", 1);
-          } else {
-            setTimeout(() => {
-              setIsLoading(false);
-              safeMessage.success("无人机开始飞行", 1);
-            }, remainingTime);
-          }
-
-          // 重置重连超时，确保位置数据开始流动后重连机制重新计时
+          setIsLoading(false);
           setupReconnect();
         }
 
@@ -538,7 +541,6 @@ export const SetTarget: React.FC = () => {
         if (data.coordinates) {
           lastPositionRef.current = data.coordinates;
         }
-
         // 处理位置更新
         handlePositionUpdate(data);
       };
@@ -696,6 +698,7 @@ export const SetTarget: React.FC = () => {
     droneSpeed,
     updateFlight,
     scene,
+    currentSceneId,
   ]);
 
   // 添加轨迹调试功能

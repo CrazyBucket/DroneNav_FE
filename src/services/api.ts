@@ -12,6 +12,7 @@ interface SimulationRequest {
   target: { x: number; y: number; z: number };
   speed?: number;
   droneSize?: { width: number; height: number; depth: number };
+  scene_id?: string;
 }
 
 interface SimulationResponse {
@@ -72,11 +73,39 @@ class Apis extends ApiBase {
   async startSimulation(
     params: SimulationRequest
   ): Promise<SimulationResponse> {
-    const res = await this.service.post<any, { data: SimulationResponse }>(
-      this.urls.startSimulation,
-      params
+    console.log(
+      `[API] 发送路径规划请求，场景ID: ${params.scene_id || "未设置"}`
     );
-    return res.data;
+
+    // 最多尝试3次
+    for (let retry = 0; retry < 3; retry++) {
+      try {
+        if (retry > 0) {
+          console.log(`[API] 第 ${retry + 1} 次尝试发送请求...`);
+        }
+
+        const res = await this.service.post<any, { data: SimulationResponse }>(
+          this.urls.startSimulation,
+          params
+        );
+
+        console.log(`[API] 路径规划请求成功: `, res.data);
+        return res.data;
+      } catch (error) {
+        console.error(`[API] 请求失败 (尝试 ${retry + 1}/3):`, error);
+
+        // 如果已经尝试3次，则抛出错误
+        if (retry === 2) {
+          throw error;
+        }
+
+        // 否则等待一段时间后重试
+        await new Promise(resolve => setTimeout(resolve, 500));
+      }
+    }
+
+    // 这行理论上不会执行，但TypeScript需要
+    throw new Error("请求失败，已达到最大重试次数");
   }
 }
 
