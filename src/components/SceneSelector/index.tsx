@@ -23,7 +23,7 @@ interface SceneSelectorProps {
   renderRef?: React.RefObject<RenderHandle>;
 }
 
-const SceneSelector: React.FC<SceneSelectorProps> = ({ renderRef }) => {
+const SceneSelector: React.FC<SceneSelectorProps> = ({}) => {
   const [scenes, setScenes] = useState<SceneInfo[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedSceneId, setSelectedSceneId] = useState<string | null>(null);

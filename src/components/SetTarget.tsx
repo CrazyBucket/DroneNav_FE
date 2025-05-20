@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { InputNumber, Button, message, Spin } from "antd";
+import { InputNumber, Button, message, Spin, Modal } from "antd";
 import * as THREE from "three";
 import { debounce } from "lodash-es";
 import { SceneManager } from "@/core/SceneManager";
@@ -10,6 +10,7 @@ import { useSimulationStore } from "@/store/simulationState";
 import { useSettingStore } from "@/store/setting";
 import { WS_BASE_URL } from "@/services/config";
 import { prepareForWSSConnection, useSafeMessage } from "@/utils/certificate";
+import { SimulationStatus } from "@/store/simulationState";
 
 interface CoordinateValue {
   x: number;
@@ -22,47 +23,14 @@ const DEBOUNCE_DELAY = 500;
 const useTrajectory = () => {
   const scene = SceneManager.getInstance();
   const [plannedPath, setPlannedPath] = useState<THREE.Vector3[]>([]);
-  const [flightPath, setFlightPath] = useState<THREE.Vector3[]>([]);
-  const flightPointsRef = useRef<THREE.Vector3[]>([]);
 
   // 更新计划路径
   const updatePlanned = useCallback(
     (points: THREE.Vector3[]) => {
       setPlannedPath(points.map(p => p.clone()));
       scene.setPlannedPath(points.map(p => p.clone()));
-    },
-    [scene]
-  );
-
-  // 更新实时路径
-  const updateFlight = useCallback(
-    (point: THREE.Vector3) => {
-      // 将点添加到本地状态
-      flightPointsRef.current.push(point.clone());
-      const pathCopy = [...flightPointsRef.current];
-      setFlightPath(pathCopy);
-
-      // 先确保轨迹可见
-      scene.setTrajectoryVisibility("flight", true);
-
-      // 两种方式更新轨迹：直接添加单点或设置整个路径
-      if (flightPointsRef.current.length === 1) {
-        // 如果只有一个点，先添加起点和终点相同的线段，使其能显示
-        scene.setFlightPath([point.clone(), point.clone()]);
-      } else if (flightPointsRef.current.length === 2) {
-        // 如果有两个点，重建轨迹
-        scene.setFlightPath(pathCopy);
-      } else {
-        // 如果有多个点，直接添加点
-        scene.addFlightPoint(point.clone());
-      }
-
-      // 请求重新渲染
+      scene.setTrajectoryVisibility("planned", true);
       scene.requestRender();
-
-      console.log(
-        `[SetTarget] 添加飞行点: (${point.x}, ${point.y}, ${point.z}), 当前点数: ${flightPointsRef.current.length}`
-      );
     },
     [scene]
   );
@@ -70,18 +38,15 @@ const useTrajectory = () => {
   // 清除路径
   const clearPaths = useCallback(() => {
     setPlannedPath([]);
-    setFlightPath([]);
-    flightPointsRef.current = [];
     scene.clearTrajectories({
       clearPlanned: true,
       clearFlight: true,
       clearWind: true,
     });
-    scene.setPlannedPath([]);
-    scene.setFlightPath([]);
+    scene.requestRender();
   }, [scene]);
 
-  return { plannedPath, flightPath, updatePlanned, updateFlight, clearPaths };
+  return { plannedPath, updatePlanned, clearPaths };
 };
 
 const CoordinateInput: React.FC<{
@@ -173,7 +138,9 @@ export const SetTarget: React.FC = () => {
   const [totalPoints, setTotalPoints] = useState(0);
   const isPathInitializedRef = useRef(false);
   const plannedPathArrayRef = useRef<(THREE.Vector3 | null)[]>([]);
-  const safeMessage = useSafeMessage(); // 使用安全的消息API
+  const safeMessage = useSafeMessage();
+
+  const { updatePlanned, clearPaths, plannedPath } = useTrajectory();
 
   // 添加引用来存储最后接收的位置和进度
   const lastProgressRef = useRef<{
@@ -185,14 +152,10 @@ export const SetTarget: React.FC = () => {
     return new THREE.Vector3(coords.x, coords.z, coords.y);
   }, []);
 
-  const { updatePlanned, updateFlight, clearPaths, plannedPath, flightPath } =
-    useTrajectory();
-
   const handlePositionUpdate = useCallback(
     (data: any) => {
       // 确保数据有效
       if (!data || !data.coordinates) {
-        console.error("[SetTarget] 接收到无效的位置数据");
         return;
       }
 
@@ -205,7 +168,6 @@ export const SetTarget: React.FC = () => {
         setTotalPoints(total);
         isPathInitializedRef.current = true;
         plannedPathArrayRef.current = Array(total).fill(null);
-        console.log(`[SetTarget] 初始化路径数组，总点数: ${total}`);
       }
 
       // 更新计划路径（虚线）
@@ -218,37 +180,26 @@ export const SetTarget: React.FC = () => {
           (point): point is THREE.Vector3 => point !== null
         );
 
-        // 批量更新，减少重复操作
         try {
-          // 更新路径
+          // 更新计划路径
           updatePlanned(validPoints);
 
-          // 将新位置添加到移动队列
+          // 更新无人机实际位置和轨迹
+          // 注意：只使用一种方式更新实际轨迹
           scene.addPositionToQueue(targetPos);
 
-          // 确保轨迹可见 - 仅在必要时设置
-          if (!showPlannedPath || !showRealTimePath) {
-            scene.setTrajectoryVisibility("planned", showPlannedPath);
-            scene.setTrajectoryVisibility("flight", showRealTimePath);
-          }
-
-          // 单次请求渲染，强制渲染确保平滑效果
+          // 确保轨迹可见并渲染
+          scene.setTrajectoryVisibility("flight", true);
           scene.forceRefreshAnimations();
+          scene.requestRender();
         } catch (error) {
           if (Math.random() < 0.05) {
-            // 降低错误日志频率
             console.error("[SetTarget] 更新轨迹失败:", error);
           }
         }
       }
     },
-    [
-      convertCoordinates,
-      updatePlanned,
-      scene,
-      showPlannedPath,
-      showRealTimePath,
-    ]
+    [convertCoordinates, updatePlanned, scene]
   );
 
   const updateSceneMarker = useCallback(
@@ -277,366 +228,384 @@ export const SetTarget: React.FC = () => {
     if (isLoading || !isReachable || !currentCoordinate) return;
 
     try {
-      // 如果已经在模拟中，询问是否要重新开始
-      if (simulationStatus !== "idle") {
-        if (
-          !window.confirm(
-            "当前模拟尚未完成，确定要重新开始吗？这将清除当前的轨迹。"
-          )
-        ) {
-          return;
-        }
-        // 重置状态
-        resetState();
-      }
+      // 定义仿真逻辑函数
+      const startSimulation = async () => {
+        // 获取最新的场景ID - 确保使用当前选择的场景
+        const currentSelectedSceneId =
+          useSimulationStore.getState().currentSceneId;
 
-      // 获取最新的场景ID - 确保使用当前选择的场景
-      const currentSelectedSceneId =
-        useSimulationStore.getState().currentSceneId;
+        // 设置加载状态
+        setIsLoading(true);
+        setSimulationStatus("planning" as SimulationStatus);
 
-      // 增加场景ID验证和日志
-      console.log(
-        `[SetTarget] 当前选择的全局场景ID: ${
-          currentSelectedSceneId || "未设置"
-        }`
-      );
+        // 应用所有设置（无人机大小、速度等）
+        applyAllSettings();
 
-      if (!currentSelectedSceneId) {
-        console.warn("[SetTarget] 警告：未选择场景，将使用默认场景");
-      } else {
+        // 应用视图模式（包括轨迹显示设置）
+        applyViewModes();
+
+        // 开启强制渲染，确保轨迹平滑显示
+        scene.setForceRender(true);
+
+        // 添加页面可见性监听，确保在页面切换焦点后继续强制渲染
+        const enableForcedRender = () => {
+          if (document.visibilityState === "visible") {
+            scene.setForceRender(true);
+          }
+        };
+        document.addEventListener("visibilitychange", enableForcedRender);
+
+        // 设置无人机速度
+        scene.setDroneSpeed(droneSpeed);
+
+        // 配置API参数 - 确保场景ID字段正确设置
+        const params = {
+          current: currentCoordinate,
+          target: coordinates,
+          speed: droneSpeed,
+          droneSize: droneSize,
+          scene_id: currentSelectedSceneId || undefined,
+        };
+
+        // 详细记录API请求信息
         console.log(
-          `[SetTarget] 使用当前选择的场景: ${currentSelectedSceneId}`
+          "[SetTarget] 开始请求路径规划, 参数:",
+          JSON.stringify(params, null, 2)
         );
-      }
+        console.log(
+          `[SetTarget] 当前场景ID: ${
+            currentSelectedSceneId || "未设置 (将使用默认场景)"
+          }`
+        );
 
-      // 设置加载状态
-      setIsLoading(true);
-      setSimulationStatus("planning");
+        // 调用API之前再次确认场景ID
+        console.log(
+          `[SetTarget] API请求前确认场景ID: ${params.scene_id || "未设置"}`
+        );
 
-      // 清除现有轨迹
-      clearPaths();
+        // 调用API
+        const response = await apis.startSimulation(params);
 
-      // 应用所有设置（无人机大小、速度等）
-      applyAllSettings();
+        // 请求后的详细日志
+        console.log(
+          `[SetTarget] 路径规划响应: ${response.status}, 任务ID: ${
+            response.task_id
+          }, 当前场景ID: ${currentSelectedSceneId || "默认"}`
+        );
 
-      // 应用视图模式（包括轨迹显示设置）
-      applyViewModes();
+        // 储存临时状态
+        const loadingState = {
+          isFirstUpdate: true,
+          loadingStartTime: Date.now(),
+          hasReceivedPositionUpdate: false,
+          minimumLoadingTime: 800, // 缩短最小加载时间
+        };
 
-      // 开启强制渲染，确保轨迹平滑显示
-      scene.setForceRender(true);
+        // 确保轨迹可见性
+        scene.setTrajectoryVisibility("planned", showPlannedPath);
+        scene.setTrajectoryVisibility("flight", showRealTimePath);
 
-      // 添加页面可见性监听，确保在页面切换焦点后继续强制渲染
-      const enableForcedRender = () => {
-        if (document.visibilityState === "visible") {
-          scene.setForceRender(true);
+        // 正确设置持久性
+        scene.setPersistent("planned-trajectory", true);
+        scene.setPersistent("flight-trajectory", true);
+
+        // 初始化实际飞行轨迹状态
+        const initialPos = convertCoordinates(currentCoordinate!);
+        console.log("[SetTarget] 初始化飞行轨迹，起点:", initialPos);
+
+        // 将起点加入飞行轨迹
+        scene.addPositionToQueue(initialPos);
+
+        // 确保场景进行渲染
+        scene.requestRender();
+        scene.forceRefreshAnimations();
+
+        // 验证响应中是否有WS端点
+        if (!response.ws_endpoint) {
+          throw new Error("后端未返回WebSocket端点");
         }
-      };
-      document.addEventListener("visibilitychange", enableForcedRender);
 
-      // 设置无人机速度
-      scene.setDroneSpeed(droneSpeed);
+        // 确保WebSocket URL使用wss协议
+        let wsUrl = `${WS_BASE_URL}${response.ws_endpoint}`;
+        if (wsUrl.startsWith("ws://")) {
+          wsUrl = wsUrl.replace("ws://", "wss://");
+          console.warn("已将WebSocket URL从ws://转换为wss://");
+        }
 
-      // 配置API参数 - 确保场景ID字段正确设置
-      const params = {
-        current: currentCoordinate,
-        target: coordinates,
-        speed: droneSpeed,
-        droneSize: droneSize,
-        scene_id: currentSelectedSceneId || undefined, // 使用最新获取的场景ID
-      };
+        // 初始化WebSocket
+        wsRef.current = new DroneWebSocket({
+          url: wsUrl,
+        });
 
-      // 详细记录API请求信息
-      console.log(
-        "[SetTarget] 开始请求路径规划, 参数:",
-        JSON.stringify(params, null, 2)
-      );
-      console.log(
-        `[SetTarget] 当前场景ID: ${
-          currentSelectedSceneId || "未设置 (将使用默认场景)"
-        }`
-      );
+        // 设置模拟状态为飞行中
+        setSimulationStatus("flying");
 
-      // 调用API之前再次确认场景ID
-      console.log(
-        `[SetTarget] API请求前确认场景ID: ${params.scene_id || "未设置"}`
-      );
+        // 设置连接超时与自动重连机制
+        let reconnectCount = 0;
+        const maxReconnects = 3;
+        let reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
 
-      // 调用API
-      const response = await apis.startSimulation(params);
+        // 设置重连机制
+        const setupReconnect = () => {
+          if (reconnectTimeout) clearTimeout(reconnectTimeout);
 
-      // 请求后的详细日志
-      console.log(
-        `[SetTarget] 路径规划响应: ${response.status}, 任务ID: ${
-          response.task_id
-        }, 当前场景ID: ${currentSelectedSceneId || "默认"}`
-      );
+          reconnectTimeout = setTimeout(() => {
+            if (
+              wsRef.current &&
+              simulationStatus === ("flying" as SimulationStatus) &&
+              reconnectCount < maxReconnects
+            ) {
+              console.log(
+                `[SetTarget] 尝试重新连接 WebSocket (${
+                  reconnectCount + 1
+                }/${maxReconnects})`
+              );
+              reconnectCount++;
 
-      // 储存临时状态
-      const loadingState = {
-        isFirstUpdate: true,
-        loadingStartTime: Date.now(),
-        hasReceivedPositionUpdate: false,
-        minimumLoadingTime: 800, // 缩短最小加载时间
-      };
+              // 尝试重新连接
+              try {
+                wsRef.current.disconnect();
+                wsRef.current.connect();
+                setupReconnect();
+              } catch (err) {
+                console.error("重连失败:", err);
 
-      // 确保轨迹可见性
-      scene.setTrajectoryVisibility("planned", showPlannedPath);
-      scene.setTrajectoryVisibility("flight", showRealTimePath);
+                // 如果重连全部失败，进入完成状态以避免卡住
+                if (reconnectCount >= maxReconnects) {
+                  setSimulationStatus("completed");
+                  safeMessage.info("连接已断开，显示已接收的路径");
+                }
+              }
+            }
+          }, 15000); // 15秒无反应就尝试重连
+        };
 
-      // 正确设置持久性
-      scene.setPersistent("planned-trajectory", true);
-      scene.setPersistent("flight-trajectory", true);
+        // 初始化重连机制
+        setupReconnect();
 
-      // 初始化实际飞行轨迹状态
-      const initialPos = convertCoordinates(currentCoordinate!);
-      console.log("[SetTarget] 初始化飞行轨迹，起点:", initialPos);
-
-      // 将起点加入飞行轨迹
-      updateFlight(initialPos);
-
-      // 确保场景进行渲染
-      scene.requestRender();
-      scene.forceRefreshAnimations();
-
-      // 验证响应中是否有WS端点
-      if (!response.ws_endpoint) {
-        throw new Error("后端未返回WebSocket端点");
-      }
-
-      // 确保WebSocket URL使用wss协议
-      let wsUrl = `${WS_BASE_URL}${response.ws_endpoint}`;
-      if (wsUrl.startsWith("ws://")) {
-        wsUrl = wsUrl.replace("ws://", "wss://");
-        console.warn("已将WebSocket URL从ws://转换为wss://");
-      }
-
-      // 初始化WebSocket
-      wsRef.current = new DroneWebSocket({
-        url: wsUrl,
-      });
-
-      // 设置模拟状态为飞行中
-      setSimulationStatus("flying");
-
-      // 设置连接超时与自动重连机制
-      let reconnectCount = 0;
-      const maxReconnects = 3;
-      let reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
-
-      // 设置重连机制
-      const setupReconnect = () => {
-        if (reconnectTimeout) clearTimeout(reconnectTimeout);
-
-        reconnectTimeout = setTimeout(() => {
+        // 初始设置WS连接超时
+        const initialConnectTimeout = setTimeout(() => {
           if (
             wsRef.current &&
-            simulationStatus === "flying" &&
-            reconnectCount < maxReconnects
+            simulationStatus === ("planning" as SimulationStatus)
           ) {
-            console.log(
-              `[SetTarget] 尝试重新连接 WebSocket (${
-                reconnectCount + 1
-              }/${maxReconnects})`
-            );
-            reconnectCount++;
-
-            // 尝试重新连接
-            try {
-              wsRef.current.disconnect();
-              wsRef.current.connect();
-              setupReconnect();
-            } catch (err) {
-              console.error("重连失败:", err);
-
-              // 如果重连全部失败，进入完成状态以避免卡住
-              if (reconnectCount >= maxReconnects) {
-                setSimulationStatus("completed");
-                safeMessage.info("连接已断开，显示已接收的路径");
-              }
-            }
+            safeMessage.error("WebSocket连接超时，请检查网络和证书设置");
+            setIsLoading(false);
+            setSimulationStatus("idle");
+            if (wsRef.current) wsRef.current.disconnect();
           }
-        }, 15000); // 15秒无反应就尝试重连
-      };
+        }, 10000);
 
-      // 初始化重连机制
-      setupReconnect();
+        // 位置更新处理
+        const handlePositionUpdateWrapper = (data: any) => {
+          // 处理第一次位置更新，关闭加载状态
+          if (loadingState.isFirstUpdate) {
+            loadingState.isFirstUpdate = false;
+            loadingState.hasReceivedPositionUpdate = true;
+            setIsLoading(false);
+            setupReconnect();
+          }
 
-      // 初始设置WS连接超时
-      const initialConnectTimeout = setTimeout(() => {
-        if (wsRef.current && simulationStatus === "planning") {
-          safeMessage.error("WebSocket连接超时，请检查网络和证书设置");
-          setIsLoading(false);
-          setSimulationStatus("idle");
-          if (wsRef.current) wsRef.current.disconnect();
-        }
-      }, 10000);
+          // 存储最新的进度信息
+          if (data.progress) {
+            lastProgressRef.current = data.progress;
+          }
 
-      // 位置更新处理
-      const handlePositionUpdateWrapper = (data: any) => {
-        // 处理第一次位置更新，关闭加载状态
-        if (loadingState.isFirstUpdate) {
-          loadingState.isFirstUpdate = false;
-          loadingState.hasReceivedPositionUpdate = true;
-          setIsLoading(false);
-          setupReconnect();
-        }
+          // 存储最新的位置信息
+          if (data.coordinates) {
+            lastPositionRef.current = data.coordinates;
+          }
 
-        // 存储最新的进度信息
-        if (data.progress) {
-          lastProgressRef.current = data.progress;
-        }
+          // 处理位置更新
+          handlePositionUpdate(data);
 
-        // 存储最新的位置信息
-        if (data.coordinates) {
-          lastPositionRef.current = data.coordinates;
-        }
+          // 强制渲染以确保更新可见
+          scene.forceRefreshAnimations();
+          scene.requestRender();
+        };
 
-        // 处理位置更新
-        handlePositionUpdate(data);
+        // 注册事件处理程序
+        if (wsRef.current) {
+          // 位置更新事件
+          wsRef.current.subscribe(
+            "position_update",
+            handlePositionUpdateWrapper
+          );
 
-        // 强制渲染以确保更新可见
-        scene.forceRefreshAnimations();
-        scene.requestRender();
-      };
+          // 连接建立事件
+          wsRef.current.subscribe("connected", () => {
+            console.log("WebSocket 连接成功");
+            safeMessage.success("路径规划连接已建立", 2);
+            // 清除初始连接超时
+            clearTimeout(initialConnectTimeout);
+            // 重置重连计数器
+            reconnectCount = 0;
+            // 重置重连超时
+            setupReconnect();
+          });
 
-      // 注册事件处理程序
-      if (wsRef.current) {
-        // 位置更新事件
-        wsRef.current.subscribe("position_update", handlePositionUpdateWrapper);
+          // 连接断开事件
+          wsRef.current.subscribe("disconnected", data => {
+            console.log("WebSocket 断开连接:", data);
 
-        // 连接建立事件
-        wsRef.current.subscribe("connected", () => {
-          console.log("WebSocket 连接成功");
-          safeMessage.success("路径规划连接已建立", 2);
-          // 清除初始连接超时
-          clearTimeout(initialConnectTimeout);
-          // 重置重连计数器
-          reconnectCount = 0;
-          // 重置重连超时
-          setupReconnect();
-        });
+            // 确保关闭加载状态
+            setIsLoading(false);
 
-        // 连接断开事件
-        wsRef.current.subscribe("disconnected", data => {
-          console.log("WebSocket 断开连接:", data);
-
-          // 确保关闭加载状态
-          setIsLoading(false);
-
-          // 如果是正常断开或已完成则不显示警告
-          if (data.reason && simulationStatus !== "completed") {
-            safeMessage.warning(`连接断开: ${data.reason}`, 3);
-
-            // 如果有进度信息，且进度接近完成，可以认为模拟已基本完成
+            // 如果是正常断开或已完成则不显示警告
             if (
-              lastProgressRef.current &&
-              lastProgressRef.current.current > 0
+              data.reason &&
+              simulationStatus !== ("completed" as SimulationStatus)
             ) {
-              const completion =
-                lastProgressRef.current.current / lastProgressRef.current.total;
-              if (completion > 0.85) {
-                // 如果已完成85%以上，视为已完成
-                setSimulationStatus("completed");
-                safeMessage.info("模拟基本完成，显示当前路径");
+              safeMessage.warning(`连接断开: ${data.reason}`, 3);
 
-                // 更新当前位置为最后接收到的位置
-                if (lastPositionRef.current) {
-                  useCoordinatesStore.setState({
-                    currentCoordinate: lastPositionRef.current,
-                  });
+              // 如果有进度信息，且进度接近完成，可以认为模拟已基本完成
+              if (
+                lastProgressRef.current &&
+                lastProgressRef.current.current > 0
+              ) {
+                const completion =
+                  lastProgressRef.current.current /
+                  lastProgressRef.current.total;
+                if (completion > 0.85) {
+                  // 如果已完成85%以上，视为已完成
+                  setSimulationStatus("completed");
+                  safeMessage.info("模拟基本完成，显示当前路径");
+
+                  // 更新当前位置为最后接收到的位置
+                  if (lastPositionRef.current) {
+                    useCoordinatesStore.setState({
+                      currentCoordinate: lastPositionRef.current,
+                    });
+                  }
+                } else {
+                  // 否则，设置为空闲状态
+                  setSimulationStatus("idle");
                 }
               } else {
-                // 否则，设置为空闲状态
+                // 无进度信息，设置为空闲状态
                 setSimulationStatus("idle");
               }
-            } else {
-              // 无进度信息，设置为空闲状态
-              setSimulationStatus("idle");
+
+              // 移除标记点
+              scene.removeObject("user-input-marker");
+              // 完成后关闭强制渲染模式，但继续保持渲染
+              scene.setForceRender(false);
+              scene.requestRender();
+            }
+          });
+
+          // 任务完成事件
+          wsRef.current.subscribe("mission_complete", () => {
+            console.log("任务完成事件触发");
+
+            // 如果从未收到过位置更新，确保关闭加载状态
+            if (loadingState.hasReceivedPositionUpdate === false) {
+              setIsLoading(false);
             }
 
-            // 移除标记点
-            scene.removeObject("user-input-marker");
-            // 完成后关闭强制渲染模式，但继续保持渲染
-            scene.setForceRender(false);
-            scene.requestRender();
-          }
-        });
+            safeMessage.success("仿真完成");
+            setSimulationStatus("completed");
 
-        // 任务完成事件
-        wsRef.current.subscribe("mission_complete", () => {
-          console.log("任务完成事件触发");
+            // 清除所有超时定时器
+            if (reconnectTimeout) clearTimeout(reconnectTimeout);
+            clearTimeout(initialConnectTimeout);
 
-          // 如果从未收到过位置更新，确保关闭加载状态
-          if (loadingState.hasReceivedPositionUpdate === false) {
+            // 确保在任务完成后仍然可以看到轨迹
+            setTimeout(() => {
+              // 强制设置轨迹可见性
+              scene.setTrajectoryVisibility("planned", true);
+              scene.setTrajectoryVisibility("flight", true);
+
+              // 更新起点为终点
+              if (lastPositionRef.current) {
+                useCoordinatesStore.setState({
+                  currentCoordinate: lastPositionRef.current,
+                });
+              }
+              // 移除标记点
+              scene.removeObject("user-input-marker");
+              // 完成后关闭强制渲染模式，但继续保持渲染
+              scene.setForceRender(false);
+              scene.requestRender();
+              scene.forceRefreshAnimations();
+
+              // 移除页面可见性监听
+              document.removeEventListener(
+                "visibilitychange",
+                enableForcedRender
+              );
+            }, 500);
+          });
+
+          // 错误处理事件
+          wsRef.current.subscribe("error", error => {
+            console.error("WebSocket 错误:", error);
+            safeMessage.error(`连接错误: ${error.message || "未知错误"}`);
+
+            // 确保关闭加载状态
             setIsLoading(false);
-          }
 
-          safeMessage.success("仿真完成");
-          setSimulationStatus("completed");
-
-          // 清除所有超时定时器
-          if (reconnectTimeout) clearTimeout(reconnectTimeout);
-          clearTimeout(initialConnectTimeout);
-
-          // 确保在任务完成后仍然可以看到轨迹
-          setTimeout(() => {
-            // 强制设置轨迹可见性
-            scene.setTrajectoryVisibility("planned", true);
-            scene.setTrajectoryVisibility("flight", true);
-
-            // 更新起点为终点
-            if (lastPositionRef.current) {
-              useCoordinatesStore.setState({
-                currentCoordinate: lastPositionRef.current,
-              });
+            // 如果是WSS证书问题，显示具体提示
+            if (error.code === "CONNECTION_ERROR") {
+              safeMessage.warning("请确保已接受WSS安全证书");
             }
-            // 移除标记点
-            scene.removeObject("user-input-marker");
-            // 完成后关闭强制渲染模式，但继续保持渲染
-            scene.setForceRender(false);
-            scene.requestRender();
-            scene.forceRefreshAnimations();
+          });
 
-            // 移除页面可见性监听
-            document.removeEventListener(
-              "visibilitychange",
-              enableForcedRender
-            );
-          }, 500);
+          // 尝试建立连接
+          wsRef.current.connect();
+        }
+      };
+
+      // 如果已经在模拟中，使用Modal询问是否要重新开始
+      if (simulationStatus !== ("idle" as SimulationStatus)) {
+        const startNewSimulation = () => {
+          // 重置状态
+          resetState();
+
+          // 重置所有轨迹相关的状态
+          isPathInitializedRef.current = false;
+          plannedPathArrayRef.current = [];
+          setTotalPoints(0);
+          lastProgressRef.current = null;
+
+          // 清除现有轨迹
+          clearPaths();
+
+          // 确保场景中的轨迹对象被完全清除
+          scene.clearTrajectories({
+            clearFlight: true,
+            clearPlanned: true,
+            clearWind: true,
+          });
+
+          // 强制刷新场景
+          scene.forceRefreshAnimations();
+          scene.requestRender();
+
+          // 继续执行仿真逻辑
+          startSimulation();
+        };
+
+        Modal.confirm({
+          title: "重新开始仿真",
+          content: "当前仿真尚未完成，重新开始将清除当前的轨迹。是否继续？",
+          okText: "继续",
+          cancelText: "取消",
+          onOk: startNewSimulation,
+          okButtonProps: {
+            className: "bg-blue-500",
+          },
         });
-
-        // 错误处理事件
-        wsRef.current.subscribe("error", error => {
-          console.error("WebSocket 错误:", error);
-          safeMessage.error(`连接错误: ${error.message || "未知错误"}`);
-
-          // 确保关闭加载状态
-          setIsLoading(false);
-
-          // 如果是WSS证书问题，显示具体提示
-          if (error.code === "CONNECTION_ERROR") {
-            safeMessage.warning("请确保已接受WSS安全证书");
-          }
-        });
-
-        // 尝试建立连接
-        wsRef.current.connect();
+        return;
       }
-    } catch (apiError) {
-      // API调用错误处理
-      console.error("API调用失败:", apiError);
-      safeMessage.error(
-        `任务启动失败: ${(apiError as Error).message || "无法连接到服务器"}`
-      );
-      setIsLoading(false);
-      setSimulationStatus("idle");
 
-      // 出错时关闭强制渲染模式
-      scene.setForceRender(false);
-      // 移除页面可见性监听
-      document.removeEventListener("visibilitychange", () =>
-        scene.setForceRender(true)
-      );
+      // 如果是第一次仿真，直接开始
+      if (simulationStatus === ("idle" as SimulationStatus)) {
+        await startSimulation();
+      }
+    } catch (error) {
+      console.error("提交失败:", error);
+      safeMessage.error("提交失败，请检查网络和证书设置");
     }
   }, [
     isReachable,
@@ -655,7 +624,6 @@ export const SetTarget: React.FC = () => {
     showRealTimePath,
     droneSize,
     droneSpeed,
-    updateFlight,
     scene,
     currentSceneId,
   ]);
@@ -664,7 +632,7 @@ export const SetTarget: React.FC = () => {
   useEffect(() => {
     // 定期检查轨迹状态
     const checkInterval = setInterval(() => {
-      if (simulationStatus === "flying") {
+      if (simulationStatus === ("flying" as SimulationStatus)) {
         // 调试输出轨迹状态
         scene.debugTrajectoryStatus();
       }
@@ -707,17 +675,17 @@ export const SetTarget: React.FC = () => {
           onClick={handleSubmit}
           disabled={isLoading || !isReachable}
         >
-          {simulationStatus === "idle"
-            ? "提交坐标"
-            : simulationStatus === "planning"
+          {simulationStatus === ("idle" as SimulationStatus)
+            ? "开始仿真"
+            : simulationStatus === ("planning" as SimulationStatus)
             ? "规划中..."
-            : simulationStatus === "flying"
+            : simulationStatus === ("flying" as SimulationStatus)
             ? "仿真中..."
-            : "已完成"}
+            : "继续仿真"}
         </Button>
       </div>
       {/* 轨迹控制按钮 */}
-      {(plannedPath.length > 0 || flightPath.length > 0) && (
+      {plannedPath.length > 0 && (
         <Button
           type="default"
           danger

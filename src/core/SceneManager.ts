@@ -1729,10 +1729,10 @@ export class SceneManager {
       // 创建管道几何体
       const tubeGeometry = new THREE.TubeGeometry(
         curve,
-        Math.max(20, points.length * 2),
-        0.08,
-        8,
-        false
+        Math.max(20, points.length * 2), // 管道分段数
+        0.08, // 管道直径
+        8, // 管道横截面分段数
+        false // 不闭合
       );
 
       const tube = new THREE.Mesh(tubeGeometry, material);
@@ -1751,6 +1751,9 @@ export class SceneManager {
       // 确保轨迹可见
       tube.visible = true;
       this.trajectoryVisible.flight = true;
+
+      // 标记为永久对象
+      this.setPersistent(id, true);
 
       // 强制渲染
       this.requestRender();
@@ -2271,7 +2274,7 @@ export class SceneManager {
         return;
       }
 
-      const targetPosition = this.positionQueue.shift();
+      const targetPosition = this.positionQueue[0]; // 只查看不移除
       if (!targetPosition) {
         this.isMoving = false;
         return;
@@ -2283,8 +2286,13 @@ export class SceneManager {
         targetPosition,
         currentPosition
       );
-      if (direction.length() > 0.01) {
-        direction.normalize();
+
+      if (direction.length() > this.moveDistance) {
+        // 如果距离目标点还有一定距离，进行插值移动
+        direction.normalize().multiplyScalar(this.moveDistance);
+        const nextPosition = currentPosition.add(direction);
+
+        // 更新朝向
         const targetRotationY = Math.atan2(direction.x, direction.z);
         const rotation = new THREE.Euler(
           droneModel.rotation.x,
@@ -2292,13 +2300,15 @@ export class SceneManager {
           droneModel.rotation.z,
           "XYZ"
         );
-        this.emergencyUpdateDrone(targetPosition, rotation);
-      } else {
-        this.emergencyUpdateDrone(targetPosition);
-      }
 
-      // 添加轨迹点
-      this.addFlightPoint(targetPosition.clone());
+        this.emergencyUpdateDrone(nextPosition, rotation);
+        this.addFlightPoint(nextPosition.clone());
+      } else {
+        // 到达目标点，移除队列中的第一个点
+        this.positionQueue.shift();
+        this.emergencyUpdateDrone(targetPosition);
+        this.addFlightPoint(targetPosition.clone());
+      }
 
       this.lastMoveTime = now;
     }
