@@ -8,6 +8,7 @@ import {
   prepareForWSSConnection,
   useSafeMessage,
 } from "./utils/certificate";
+import { DroneProvider } from "./core/DroneContext";
 
 // 页面组件
 import Home from "./pages/Home";
@@ -75,59 +76,61 @@ function App() {
       }}
     >
       <AppProvider>
-        <BrowserRouter>
-          <Routes>
-            {/* 受保护的路由 */}
-            <Route
-              path="/"
-              element={
-                <ProtectedRoute>
-                  <Home />
-                </ProtectedRoute>
-              }
-            />
+        <DroneProvider>
+          <BrowserRouter>
+            <Routes>
+              {/* 受保护的路由 */}
+              <Route
+                path="/"
+                element={
+                  <ProtectedRoute>
+                    <Home />
+                  </ProtectedRoute>
+                }
+              />
 
-            {/* 公共路由 */}
-            <Route
-              path="/login"
-              element={
-                <PublicRoute restricted>
-                  <Login />
-                </PublicRoute>
-              }
-            />
-            <Route
-              path="/register"
-              element={
-                <PublicRoute restricted>
-                  <Register />
-                </PublicRoute>
-              }
-            />
-            <Route
-              path="/forgot-password"
-              element={
-                <PublicRoute restricted>
-                  <ForgotPassword />
-                </PublicRoute>
-              }
-            />
-            <Route
-              path="/reset-password/:token"
-              element={
-                <PublicRoute restricted>
-                  <ResetPassword />
-                </PublicRoute>
-              }
-            />
+              {/* 公共路由 */}
+              <Route
+                path="/login"
+                element={
+                  <PublicRoute restricted>
+                    <Login />
+                  </PublicRoute>
+                }
+              />
+              <Route
+                path="/register"
+                element={
+                  <PublicRoute restricted>
+                    <Register />
+                  </PublicRoute>
+                }
+              />
+              <Route
+                path="/forgot-password"
+                element={
+                  <PublicRoute restricted>
+                    <ForgotPassword />
+                  </PublicRoute>
+                }
+              />
+              <Route
+                path="/reset-password/:token"
+                element={
+                  <PublicRoute restricted>
+                    <ResetPassword />
+                  </PublicRoute>
+                }
+              />
 
-            {/* 特殊路由 */}
-            <Route path="/unauthorized" element={<Unauthorized />} />
+              {/* 特殊路由 */}
+              <Route path="/unauthorized" element={<Unauthorized />} />
 
-            {/* 未匹配路由重定向到首页 */}
-            <Route path="*" element={<Navigate to="/" replace />} />
-          </Routes>
-        </BrowserRouter>
+              {/* 未匹配路由重定向到首页 */}
+              <Route path="*" element={<Navigate to="/" replace />} />
+            </Routes>
+          </BrowserRouter>
+        </DroneProvider>
       </AppProvider>
     </ConfigProvider>
   );

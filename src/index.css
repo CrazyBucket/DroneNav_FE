@@ -50,3 +50,8 @@ body,
 .ant-btn:hover .anticon {
   transform: scale(1.1);
 }
+
+/* 修复能源图表模态框关闭按钮位置 */
+.energy-chart-modal .ant-modal-close {
+  top: 10px !important;
+}

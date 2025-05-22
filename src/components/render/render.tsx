@@ -210,7 +210,12 @@ const Render = forwardRef<RenderHandle, RenderProps>(
       console.log("Render组件已挂载，准备暴露方法");
 
       // 如果已经有ref对象传入，立即记录日志
-      if (ref && typeof ref === "object" && "current" in ref) {
+      if (
+        ref &&
+        typeof ref === "object" &&
+        "current" in ref &&
+        ref.current !== null
+      ) {
         console.log("Render组件ref对象存在:", ref);
       } else {
         console.warn("Render组件ref未提供或格式不正确");

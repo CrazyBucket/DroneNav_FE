@@ -823,6 +823,9 @@ export class SceneManager {
       this.firstPersonMode = true;
       this.firstPersonObjectId = objectId;
 
+      // 在第一人称视角下隐藏无人机模型
+      this.setObjectVisibility(objectId, false);
+
       this.updateFirstPersonView(true);
 
       this.configureFirstPersonControls();
@@ -947,6 +950,11 @@ export class SceneManager {
 
     this.animationCallbacks.delete("cameraFollow");
     this.animationCallbacks.delete("firstPersonView");
+
+    // 如果正在第一人称视角模式，退出时显示无人机模型
+    if (wasInFirstPerson && this.firstPersonObjectId) {
+      this.setObjectVisibility(this.firstPersonObjectId, true);
+    }
 
     this.followingObjectId = null;
     this.firstPersonMode = false;
@@ -1111,7 +1119,8 @@ export class SceneManager {
     await this.animateToPosition(id, target, duration);
 
     try {
-      this.setTrajectoryVisibility("flight", true);
+      // 使用当前轨迹可见性设置，而不是强制设为可见
+      // this.setTrajectoryVisibility("flight", true);
       this.addFlightPoint(target.clone());
       this.ensureViewModes();
     } catch (error) {
@@ -1348,38 +1357,98 @@ export class SceneManager {
    * @param height 高度
    */
   public resize(width: number, height: number): void {
-    if (width <= 0 || height <= 0) {
+    // 更严格的参数验证和边界检查
+    if (!width || !height || isNaN(width) || isNaN(height)) {
+      console.warn(
+        `[SceneManager] 无效的尺寸参数: width=${width}, height=${height}`
+      );
       return;
     }
 
+    // 强制转换为整数并确保最小值
+    width = Math.max(1, Math.round(width));
+    height = Math.max(1, Math.round(height));
+
+    console.log(`[SceneManager] 调整场景尺寸: ${width}x${height}`);
+
+    // 检查尺寸变化是否明显
     if (this.renderer) {
       const currentSize = this.renderer.getSize(new THREE.Vector2());
+
+      // 如果尺寸未变化，只触发渲染
       if (currentSize.width === width && currentSize.height === height) {
+        console.log(
+          `[SceneManager] 尺寸未变化(${width}x${height})，仅触发重新渲染`
+        );
         this.requestRender();
         return;
       }
+
+      // 记录尺寸变化情况
+      console.log(
+        `[SceneManager] 尺寸变化: ${currentSize.width}x${currentSize.height} -> ${width}x${height}`
+      );
     }
 
     try {
-      if (this.renderer && this.camera) {
-        this.renderer.setSize(width, height);
+      // 1. 调整渲染器尺寸
+      if (this.renderer) {
+        try {
+          this.renderer.setSize(width, height, true); // 使用updateStyle=true确保CSS尺寸同步
+          console.log(`[SceneManager] 渲染器尺寸已更新: ${width}x${height}`);
+        } catch (err) {
+          console.error(`[SceneManager] 更新渲染器尺寸失败:`, err);
+        }
+      }
 
-        if (this.camera) {
+      // 2. 更新相机参数
+      if (this.camera) {
+        try {
           this.camera.aspect = width / height;
           this.camera.updateProjectionMatrix();
+          console.log(
+            `[SceneManager] 相机参数已更新, 宽高比: ${this.camera.aspect.toFixed(
+              3
+            )}`
+          );
+        } catch (err) {
+          console.error(`[SceneManager] 更新相机参数失败:`, err);
         }
+      }
 
-        if (this.controls) {
+      // 3. 更新控制器
+      if (this.controls) {
+        try {
           this.controls.update();
+        } catch (err) {
+          console.error(`[SceneManager] 更新相机控制器失败:`, err);
         }
+      }
 
-        this.requestRender();
+      // 4. 更新后处理效果（如果有）
+      if (this.composer) {
+        try {
+          this.composer.setSize(width, height);
+        } catch (err) {
+          console.error(`[SceneManager] 更新后处理效果失败:`, err);
+        }
+      }
+
+      // 立即触发一次渲染，确保变化立即可见
+      this.requestRender();
+      this.markNeedsUpdate();
+
+      // 如果处于强制渲染模式，执行一次额外的smartRender
+      if (this.forceRender) {
+        try {
+          this.smartRender();
+        } catch (err) {
+          console.error(`[SceneManager] resize后强制渲染失败:`, err);
+        }
       }
     } catch (error) {
-      throw new Error(`resize出错: ${error}`);
+      console.error(`[SceneManager] resize过程中发生错误:`, error);
     }
-
-    this.markNeedsUpdate();
   }
 
   public static getInstance(container?: HTMLDivElement): SceneManager {
@@ -1748,9 +1817,8 @@ export class SceneManager {
         static: false,
       });
 
-      // 确保轨迹可见
-      tube.visible = true;
-      this.trajectoryVisible.flight = true;
+      // 使用当前轨迹可见性设置，而不是强制设为可见
+      tube.visible = this.trajectoryVisible.flight;
 
       // 标记为永久对象
       this.setPersistent(id, true);
@@ -2043,52 +2111,22 @@ export class SceneManager {
       // 1. 获取无人机模型
       const droneModel = this.getObject("drone-model");
       if (!droneModel) {
-        throw new Error("紧急更新失败：无人机模型不存在");
+        return;
       }
 
-      // 减少日志输出，仅在有明显变化时输出
-      const oldPosition = droneModel.position.clone();
-      const distance = oldPosition.distanceTo(position);
+      // 2. 计算已移动的距离
+      const currentPosition = droneModel.position.clone();
+      const distance = currentPosition.distanceTo(position);
 
-      // 2. 直接应用位置
+      // 3. 更新位置和旋转
       droneModel.position.copy(position);
-
-      // 3. 如果提供了旋转信息，应用旋转
       if (rotation) {
-        // 保存旧的旋转以检测变化
-        const oldRotation = droneModel.rotation.clone();
-
-        // 应用新旋转
         droneModel.rotation.copy(rotation);
-
-        // 确保四元数也被更新 - 这一步很关键
-        droneModel.quaternion.setFromEuler(rotation);
-
-        // 检测旋转是否有明显变化
-        const rotChanged =
-          Math.abs(oldRotation.y - rotation.y) > 0.05 ||
-          Math.abs(oldRotation.x - rotation.x) > 0.05 ||
-          Math.abs(oldRotation.z - rotation.z) > 0.05;
-
-        if (rotChanged && Math.random() < 0.1) {
-          console.log(
-            `[SceneManager] 无人机旋转更新: [${oldRotation.y.toFixed(
-              2
-            )}] -> [${rotation.y.toFixed(2)}]`
-          );
-        }
       }
 
-      // 4. 记录更新结果（只在明显位移时）
-      if (distance > 0.1 && Math.random() < 0.05) {
-        // 降低日志频率
-        console.log(
-          `[SceneManager] 更新无人机: ${oldPosition
-            .toArray()
-            .map(v => v.toFixed(2))} -> ${position
-            .toArray()
-            .map(v => v.toFixed(2))}`
-        );
+      // 4. 如果在第一人称视角模式，保持无人机模型隐藏
+      if (this.firstPersonMode && this.firstPersonObjectId === "drone-model") {
+        droneModel.visible = false;
       }
 
       // 5. 标记需要更新
@@ -2211,9 +2249,8 @@ export class SceneManager {
     // 更新风力轨迹
     this.trajectoryPaths.wind = windPoints;
 
-    // 确保风力轨迹可见
+    // 保持当前可见性设置，而不是强制可见
     const wasVisible = this.trajectoryVisible.wind;
-    this.setTrajectoryVisibility("wind", true);
 
     if (shouldLog) {
       console.log(
@@ -2223,12 +2260,13 @@ export class SceneManager {
           `风向=[${windDirection.x.toFixed(2)}, ${windDirection.y.toFixed(
             2
           )}, ${windDirection.z.toFixed(2)}], ` +
-          `可见性: ${wasVisible} → true`
+          `可见性: ${wasVisible} (保持不变)`
       );
     }
 
-    // 强制渲染一次轨迹
+    // 强制渲染一次轨迹 - 使用当前可见性设置
     this.renderTrajectory("wind");
+
     // 请求重新渲染
     this.requestRender();
   }
@@ -2325,5 +2363,24 @@ export class SceneManager {
   public clearPositionQueue(): void {
     this.positionQueue = [];
     this.isMoving = false;
+  }
+
+  /**
+   * 设置场景对象的可见性
+   * @param objectId 对象ID
+   * @param visible 是否可见
+   */
+  public setObjectVisibility(objectId: string, visible: boolean): void {
+    try {
+      const obj = this.getObject(objectId);
+      if (obj) {
+        obj.visible = visible;
+        this.markNeedsUpdate();
+        this.requestRender();
+        console.log(`[SceneManager] 设置对象 ${objectId} 可见性: ${visible}`);
+      }
+    } catch (error) {
+      console.error(`[SceneManager] 设置对象可见性失败: ${error}`);
+    }
   }
 }

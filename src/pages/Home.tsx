@@ -15,6 +15,7 @@ import {
 import Render, { RenderHandle } from "@/components/Render/Render";
 import { useSimulationStore } from "@/store/simulationState";
 import { useSettingStore } from "@/store/setting";
+import { useDrone } from "@/core/DroneContext";
 
 type ViewId = "left-pane" | "right-pane";
 const USER_SPLIT_KEY = "user-split-percentage";
@@ -108,6 +109,9 @@ const HomeContent: React.FC = () => {
   const [resizeMaskVisible, setResizeMaskVisible] = useState(false);
   const resizeMaskTimeout = useRef<ReturnType<typeof setTimeout>>();
 
+  // 获取全局无人机状态
+  const { isFlying } = useDrone();
+
   useEffect(() => {
     const initializeScene = async () => {
       if (!containerRef.current) return;
@@ -165,10 +169,12 @@ const HomeContent: React.FC = () => {
   }, [layout]);
 
   const updateSceneSize = useCallback(() => {
-    if (!renderRef.current) return;
-
+    // 获取容器尺寸，即使renderRef.current暂时不可用也获取
     const container = document.getElementById("scene-container");
-    if (!container) return;
+    if (!container) {
+      console.warn("[Home] 无法找到scene-container元素，无法更新场景大小");
+      return;
+    }
 
     const rect = container.getBoundingClientRect();
     const width = Math.round(rect.width);
@@ -179,17 +185,34 @@ const HomeContent: React.FC = () => {
     const validWidth = collapsed ? width : Math.max(width, SCENE_MIN_WIDTH);
     const validHeight = Math.max(height, 100);
 
+    // 记录当前请求的尺寸和renderRef状态
     console.log(
-      `[Home] 场景容器尺寸：${width}x${height}，调整为：${validWidth}x${validHeight}, 折叠状态: ${collapsed}`
+      `[Home] 更新场景尺寸: ${width}x${height} -> ${validWidth}x${validHeight}, 折叠状态: ${collapsed}, renderRef就绪: ${!!renderRef.current}`
     );
 
-    // 立即显示遮罩
+    // 显示尺寸调整时的遮罩
     setResizeMaskVisible(true);
 
-    // 使用setTimeout错开渲染时机，避免和布局变化同时发生
+    // 延迟执行，错开渲染时机
     setTimeout(() => {
-      // 传入immediate参数为true，跳过防抖逻辑
-      renderRef.current?.resize(validWidth, validHeight);
+      if (renderRef.current) {
+        // 如果renderRef可用，直接调用resize方法
+        console.log(`[Home] 调用Render.resize(${validWidth}, ${validHeight})`);
+        try {
+          renderRef.current.resize(validWidth, validHeight, true);
+        } catch (err) {
+          console.error("[Home] 调用resize方法出错:", err);
+        }
+      } else {
+        // 如果renderRef尚未准备好，记录日志
+        console.warn(`[Home] renderRef.current为null，无法调整大小`);
+
+        // 可以考虑添加尺寸变化到全局变量，使组件在初始化时能获取这些值
+        // 或使用MutationObserver监控容器尺寸变化
+        console.log(
+          `[Home] 将在Render组件可用时自动应用尺寸: ${validWidth}x${validHeight}`
+        );
+      }
 
       // 延迟隐藏遮罩
       if (resizeMaskTimeout.current) {
@@ -294,7 +317,10 @@ const HomeContent: React.FC = () => {
 
   // 创建一个直接处理场景大小的函数，不依赖于updateSceneSize
   const forceUpdateSceneSize = useCallback(() => {
-    if (!renderRef.current) return;
+    if (!renderRef.current) {
+      console.warn("[Home] renderRef.current为空，无法强制更新场景大小");
+      return;
+    }
 
     try {
       const container = document.getElementById("scene-container");
@@ -316,8 +342,8 @@ const HomeContent: React.FC = () => {
         `[Home] 强制更新场景大小: 实际=${width}x${height}, 使用=${validWidth}x${validHeight}, 折叠状态: ${collapsed}`
       );
 
-      // 直接调用Render组件的resize方法
-      renderRef.current.resize(validWidth, validHeight);
+      // 直接调用Render组件的resize方法，并设置immediate为true
+      renderRef.current.resize(validWidth, validHeight, true);
     } catch (error) {
       console.error("[Home] 强制更新场景大小时出错:", error);
     }
@@ -551,6 +577,26 @@ const HomeContent: React.FC = () => {
     };
   }, [forceUpdateSceneSize, layout.splitPercentage, collapsed]);
 
+  // 添加一个效果来确保在飞行状态下场景持续渲染
+  useEffect(() => {
+    if (isFlying && sceneManagerRef.current) {
+      console.log("[Home] 检测到正在飞行，确保场景持续渲染");
+      sceneManagerRef.current.setForceRender(true);
+
+      // 创建定时器定期刷新场景
+      const renderTimer = setInterval(() => {
+        if (sceneManagerRef.current) {
+          sceneManagerRef.current.forceRefreshAnimations();
+          sceneManagerRef.current.requestRender();
+        }
+      }, 1000); // 每秒刷新一次
+
+      return () => {
+        clearInterval(renderTimer);
+      };
+    }
+  }, [isFlying]);
+
   return (
     <div className="h-screen flex flex-col">
       <div className="absolute inset-0 bg-[linear-gradient(-30deg,_#1a3a1a_20%,_#000_80%)] backdrop-blur-[2px] z-0" />
@@ -600,10 +646,21 @@ const HomeContent: React.FC = () => {
 };
 
 const Home: React.FC = () => {
+  // 获取无人机全局状态
+  const { isFlying } = useDrone();
+
   return (
-    <SceneProvider>
-      <HomeContent />
-    </SceneProvider>
+    <>
+      {/* 添加隐藏的状态指示器，确保全局状态能够在组件中访问 */}
+      <div
+        style={{ display: "none" }}
+        data-drone-flying={isFlying ? "true" : "false"}
+      />
+
+      <SceneProvider>
+        <HomeContent />
+      </SceneProvider>
+    </>
   );
 };
 

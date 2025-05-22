@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useRef } from "react";
 import { SceneManager } from "@/core/SceneManager";
 import { useSettingStore } from "@/store/setting";
+import { Modal } from "antd";
 
 interface EnergyData {
   totalPower: number;
@@ -49,6 +50,9 @@ const EnergyPanel: React.FC = () => {
   );
 
   const { gravityEffect, windEffect } = useSettingStore();
+
+  // 添加模态框控制状态
+  const [modalVisible, setModalVisible] = useState(false);
 
   // 计算风力和重力影响百分比
   const getWindImpact = () => {
@@ -428,7 +432,13 @@ const EnergyPanel: React.FC = () => {
     return (
       <div className="mt-3 pt-2 border-t border-gray-700/50">
         <div className="text-xs text-gray-300 mb-1">功率趋势 (W):</div>
-        <svg width={width} height={height} className="bg-gray-900/30 rounded">
+        <svg
+          width={width}
+          height={height}
+          className="bg-gray-900/30 rounded cursor-pointer hover:bg-gray-800/40 transition-colors"
+          onClick={() => setModalVisible(true)}
+        >
+          <title>点击查看大图</title>
           {/* 添加网格线和刻度 */}
           {createYAxisTicks()}
 
@@ -471,6 +481,261 @@ const EnergyPanel: React.FC = () => {
             </text>
           )}
         </svg>
+      </div>
+    );
+  };
+
+  // 绘制放大版能耗趋势图的函数
+  const renderLargeEnergyChart = () => {
+    if (energyHistory.length < 2) return null;
+
+    // 确定图表尺寸和边距 - 放大版本
+    const width = 600;
+    const height = 300;
+    const padding = 25;
+
+    // 动态计算合适的Y轴范围
+    const dataMin = Math.min(...energyHistory.map(d => d.totalPower));
+    const dataMax = Math.max(...energyHistory.map(d => d.totalPower));
+    const dataRange = dataMax - dataMin;
+    const effectiveRange = Math.max(dataRange, 5);
+    const buffer = effectiveRange * 0.1;
+    const minPower = Math.max(0, dataMin - buffer);
+    const maxPower = dataMax + buffer;
+
+    // 使用所有历史数据点绘制
+    const displayData = [...energyHistory];
+
+    if (displayData.length < 2) return null;
+
+    const latestDataPoint = displayData[displayData.length - 1];
+    const latestPower = latestDataPoint?.totalPower.toFixed(1) ?? "0";
+
+    // 构建SVG路径
+    const points = displayData
+      .map((point, index) => {
+        const x =
+          padding + (index / (displayData.length - 1)) * (width - 2 * padding);
+        const y =
+          height -
+          padding -
+          ((point.totalPower - minPower) / (maxPower - minPower || 1)) *
+            (height - 2 * padding);
+        return `${x},${y}`;
+      })
+      .join(" ");
+
+    // 根据功率变化选择趋势线颜色
+    const getTrendColor = () => {
+      if (displayData.length < 2) return "#4DD18D"; // 默认绿色
+
+      const firstValue = displayData[0]?.totalPower || 0;
+      const lastValue = displayData[displayData.length - 1]?.totalPower || 0;
+      const change = lastValue - firstValue;
+
+      if (change > 5) return "#EF4444"; // 大幅上升为红色
+      if (change > 1) return "#F59E0B"; // 小幅上升为橙色
+      if (change < -5) return "#10B981"; // 大幅下降为绿色
+      if (change < -1) return "#60A5FA"; // 小幅下降为蓝色
+      return "#4DD18D"; // 基本稳定为青绿色
+    };
+
+    const trendColor = getTrendColor();
+
+    // 创建Y轴刻度 - 放大版，更多刻度点
+    const createYAxisTicks = () => {
+      // 创建5个刻度
+      const tickCount = 5;
+      const ticks = Array.from({ length: tickCount }, (_, i) => {
+        const value = minPower + (i / (tickCount - 1)) * (maxPower - minPower);
+        const y =
+          height - padding - (i / (tickCount - 1)) * (height - 2 * padding);
+        return { value, y };
+      });
+
+      return (
+        <>
+          {/* 添加Y轴线 */}
+          <line
+            x1={padding}
+            y1={padding}
+            x2={padding}
+            y2={height - padding}
+            stroke="#666"
+            strokeWidth="1"
+          />
+
+          {/* 添加X轴线 */}
+          <line
+            x1={padding}
+            y1={height - padding}
+            x2={width - padding}
+            y2={height - padding}
+            stroke="#666"
+            strokeWidth="1"
+          />
+
+          {/* 添加刻度线和数值 */}
+          {ticks.map((tick, i) => (
+            <g key={i}>
+              <line
+                x1={padding - 5}
+                y1={tick.y}
+                x2={width - padding}
+                y2={tick.y}
+                stroke={i === 0 ? "#666" : "#333"}
+                strokeWidth={i === 0 ? "1" : "0.5"}
+                strokeDasharray={i === 0 ? "none" : "2,2"}
+              />
+              <text
+                x={padding - 8}
+                y={tick.y}
+                fill="#aaa"
+                fontSize="12"
+                textAnchor="end"
+                alignmentBaseline="middle"
+              >
+                {Math.round(tick.value)}W
+              </text>
+            </g>
+          ))}
+        </>
+      );
+    };
+
+    // 创建X轴时间标签
+    const createTimeLabels = () => {
+      // 仅在较长的历史记录时显示时间标签
+      if (displayData.length < 10) return null;
+
+      const labelCount = 5; // 选择5个时间点标记
+      const labels = Array.from({ length: labelCount }, (_, i) => {
+        const index = Math.floor(
+          (i / (labelCount - 1)) * (displayData.length - 1)
+        );
+        const dataPoint = displayData[index];
+        const x =
+          padding + (index / (displayData.length - 1)) * (width - 2 * padding);
+
+        // 格式化时间和安全处理可能的undefined
+        let timeString = "--:--";
+        if (dataPoint) {
+          const time = new Date(dataPoint.timestamp);
+          timeString = `${time.getMinutes().toString().padStart(2, "0")}:${time
+            .getSeconds()
+            .toString()
+            .padStart(2, "0")}`;
+        }
+
+        return { x, time: timeString };
+      });
+
+      return (
+        <>
+          {labels.map((label, i) => (
+            <g key={i}>
+              <line
+                x1={label.x}
+                y1={height - padding}
+                x2={label.x}
+                y2={height - padding + 5}
+                stroke="#666"
+                strokeWidth="1"
+              />
+              <text
+                x={label.x}
+                y={height - padding + 16}
+                fill="#aaa"
+                fontSize="10"
+                textAnchor="middle"
+              >
+                {label.time}
+              </text>
+            </g>
+          ))}
+        </>
+      );
+    };
+
+    return (
+      <div className="w-full h-full flex justify-center items-center">
+        <div className="bg-gray-900 rounded-lg p-4 border border-gray-700 shadow-lg">
+          <h3 className="text-white text-lg font-medium mb-4 text-center">
+            无人机功率趋势图
+          </h3>
+          <svg width={width} height={height} className="bg-black/30 rounded">
+            {/* 添加网格线和刻度 */}
+            {createYAxisTicks()}
+            {createTimeLabels()}
+
+            {/* 绘制曲线 */}
+            <polyline
+              points={points}
+              fill="none"
+              stroke={trendColor}
+              strokeWidth="2"
+            />
+            {/* 添加填充区域 */}
+            <path
+              d={`M${padding},${height - padding} ${points} ${
+                width - padding
+              },${height - padding} Z`}
+              fill={`${trendColor}33`} // 33 = 20% 透明度
+            />
+            {/* 显示当前值 */}
+            <text
+              x={padding + 10}
+              y="25"
+              fill={trendColor}
+              fontSize="16"
+              fontWeight="bold"
+            >
+              当前功率: {latestPower} W
+            </text>
+
+            {/* 显示变化率 */}
+            {displayData.length >= 2 && (
+              <text
+                x={width - 140}
+                y="25"
+                fill={trendColor}
+                fontSize="14"
+                fontWeight="bold"
+              >
+                {(() => {
+                  const firstValue = displayData[0]?.totalPower || 0;
+                  const lastValue =
+                    displayData[displayData.length - 1]?.totalPower || 0;
+                  const change = lastValue - firstValue;
+                  const sign = change > 0 ? "+" : change < 0 ? "-" : "";
+                  return `变化率: ${sign}${Math.abs(change).toFixed(1)}W`;
+                })()}
+              </text>
+            )}
+
+            {/* 添加图例 */}
+            <g
+              transform={`translate(${width - 150}, ${height - padding - 60})`}
+            >
+              <rect width="120" height="50" rx="5" fill="rgba(0,0,0,0.5)" />
+              <text x="10" y="20" fill="#fff" fontSize="12">
+                图例:
+              </text>
+              <circle cx="25" cy="35" r="5" fill="#EF4444" />
+              <text x="35" y="38" fill="#fff" fontSize="10">
+                功率大幅上升
+              </text>
+              <circle cx="25" cy="55" r="5" fill="#10B981" />
+              <text x="35" y="58" fill="#fff" fontSize="10">
+                功率大幅下降
+              </text>
+            </g>
+          </svg>
+          <div className="mt-4 text-center text-gray-400 text-xs">
+            显示最近{displayData.length}个数据点 (约
+            {Math.round(displayData.length / 5)}秒)
+          </div>
+        </div>
       </div>
     );
   };
@@ -520,6 +785,22 @@ const EnergyPanel: React.FC = () => {
 
       {/* 添加能耗趋势图表 */}
       {renderEnergyChart()}
+
+      {/* 能耗趋势图放大模态框 */}
+      <Modal
+        title={null}
+        open={modalVisible}
+        onCancel={() => setModalVisible(false)}
+        footer={null}
+        width={650}
+        centered
+        destroyOnClose
+        maskClosable
+        styles={{ body: { padding: 0 } }}
+        className="energy-chart-modal"
+      >
+        {renderLargeEnergyChart()}
+      </Modal>
     </div>
   );
 };

@@ -170,9 +170,13 @@ export const useSettingStore = create<SettingState>((set, get) => ({
         sceneManager.setFirstPersonView("drone-model");
         console.log("[设置] 应用第一人称视角");
       } else if (followDroneView) {
+        // 确保无人机可见
+        sceneManager.setObjectVisibility("drone-model", true);
         sceneManager.setCameraFollowObject("drone-model");
         console.log("[设置] 应用跟随视角");
       } else {
+        // 确保无人机可见
+        sceneManager.setObjectVisibility("drone-model", true);
         sceneManager.resetCameraFollow();
         console.log("[设置] 重置视角为默认");
       }

@@ -26,6 +26,9 @@ export class DroneWebSocket {
   private reconnectAttempts: number;
   private connectionInProgress: boolean;
   private timeout: ReturnType<typeof setTimeout> | null;
+  private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+  private isActive: boolean = false; // 是否处于活跃状态
+  private lastMessageTime: number = 0; // 上次消息时间戳
 
   constructor(config: Partial<WebSocketConfig> = {}) {
     this.config = {
@@ -82,10 +85,16 @@ export class DroneWebSocket {
           this.timeout = null;
         }
         this.connectionInProgress = false;
+        this.isActive = true; // 连接成功后标记为活跃
+        this.lastMessageTime = Date.now();
         this.handleOpen();
+        this.startHeartbeat(); // 开始心跳检测
       };
 
-      this.ws.onmessage = e => this.handleMessage(e);
+      this.ws.onmessage = e => {
+        this.lastMessageTime = Date.now(); // 记录最后收到消息的时间
+        this.handleMessage(e);
+      };
 
       this.ws.onclose = event => {
         if (this.timeout) {
@@ -93,6 +102,8 @@ export class DroneWebSocket {
           this.timeout = null;
         }
         this.connectionInProgress = false;
+        this.isActive = false; // 连接关闭后标记为非活跃
+        this.stopHeartbeat(); // 停止心跳检测
         this.handleClose(event);
       };
 
@@ -102,17 +113,91 @@ export class DroneWebSocket {
           this.timeout = null;
         }
         this.connectionInProgress = false;
+        this.isActive = false; // 错误发生后标记为非活跃
         this.handleError(e);
       };
     } catch (e) {
       console.error("WebSocket连接创建失败:", e);
       this.connectionInProgress = false;
+      this.isActive = false;
       if (this.timeout) {
         clearTimeout(this.timeout);
         this.timeout = null;
       }
       this.handleConnectionFailure("连接创建失败");
     }
+  }
+
+  // 新增: 开始心跳检测
+  private startHeartbeat(): void {
+    this.stopHeartbeat(); // 确保只有一个心跳定时器
+
+    this.heartbeatTimer = setInterval(() => {
+      // 如果连接已经关闭或不存在，停止心跳
+      if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+        this.stopHeartbeat();
+        return;
+      }
+
+      // 如果距离上次消息超过30秒，发送心跳包
+      const timeSinceLastMessage = Date.now() - this.lastMessageTime;
+      if (timeSinceLastMessage > 30000) {
+        try {
+          // 发送一个ping消息作为心跳
+          this.ws.send(JSON.stringify({ type: "ping" }));
+          console.log("[WS] 发送心跳包...");
+        } catch (error) {
+          console.error("[WS] 发送心跳包失败:", error);
+          // 如果发送失败，尝试重连
+          this.reconnect();
+        }
+      }
+    }, 15000); // 每15秒检查一次
+  }
+
+  // 新增: 停止心跳检测
+  private stopHeartbeat(): void {
+    if (this.heartbeatTimer) {
+      clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = null;
+    }
+  }
+
+  // 新增: 重连方法
+  private reconnect(): void {
+    if (this.reconnectAttempts < this.config.maxReconnects) {
+      console.log(
+        `[WS] 尝试重新连接 (${this.reconnectAttempts + 1}/${
+          this.config.maxReconnects
+        })...`
+      );
+      this.reconnectAttempts++;
+      this.disconnect();
+      setTimeout(() => {
+        this.connect();
+      }, this.config.reconnectInterval);
+    } else {
+      console.error("[WS] 重连次数已达上限，放弃重连");
+      this.dispatch("error", {
+        code: "RECONNECT_FAILED",
+        message: "重连失败，请刷新页面重试",
+        timestamp: new Date().toISOString(),
+      });
+    }
+  }
+
+  // 新增: 保持连接活跃，即使组件卸载也不会断开
+  keepAlive(): void {
+    if (!this.isActive) return;
+
+    console.log("[WS] 保持WebSocket连接活跃状态");
+    // 这个方法被调用，表示即使组件卸载，连接也应保持活跃
+    // 实际连接管理由全局context负责
+  }
+
+  // 新增: 检查连接是否活跃
+  isConnected(): boolean {
+    return this.isActive && this.ws?.readyState === WebSocket.OPEN;
   }
 
   subscribe<K extends WebSocketEvent>(
@@ -134,6 +219,8 @@ export class DroneWebSocket {
   }
 
   disconnect(): void {
+    this.stopHeartbeat();
+
     if (this.timeout) {
       clearTimeout(this.timeout);
       this.timeout = null;
@@ -150,6 +237,7 @@ export class DroneWebSocket {
 
     this.reconnectAttempts = 0;
     this.connectionInProgress = false;
+    this.isActive = false;
   }
 
   private handleOpen(): void {
@@ -189,6 +277,7 @@ export class DroneWebSocket {
     const isNormalClosure = event?.code === 1000 || event?.code === 1001;
 
     this.ws = null;
+    this.isActive = false;
 
     this.dispatch("disconnected", {
       timestamp: new Date().toISOString(),
@@ -226,6 +315,7 @@ export class DroneWebSocket {
       }
       this.ws = null;
     }
+    this.isActive = false;
 
     this.dispatch("error", {
       code: "CONNECTION_ERROR",
@@ -240,6 +330,7 @@ export class DroneWebSocket {
 
   private handleConnectionFailure(reason: string): void {
     console.error(`WebSocket连接失败: ${reason}`);
+    this.isActive = false;
 
     this.dispatch("error", {
       code: "CONNECTION_FAILED",

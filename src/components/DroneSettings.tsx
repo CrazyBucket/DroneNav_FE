@@ -235,7 +235,6 @@ const DroneSettings: React.FC<DroneSettingsProps> = ({ collapsed = false }) => {
         title="第一人称视角"
         description="使用无人机摄像头向前看的视角"
         className="mt-2"
-        tooltip="启用后将从无人机位置向前方看，无法看到无人机本身"
       >
         <Switch checked={firstPersonView} onChange={setFirstPersonView} />
       </SettingCard>
@@ -244,7 +243,6 @@ const DroneSettings: React.FC<DroneSettingsProps> = ({ collapsed = false }) => {
         title="跟随视角"
         description="让相机跟随无人机移动"
         className="mt-2"
-        tooltip="启用后相机将跟随无人机移动，但仍然可以看到无人机"
       >
         <Switch
           checked={followDroneView}

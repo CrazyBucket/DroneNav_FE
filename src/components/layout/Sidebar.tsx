@@ -53,15 +53,28 @@ const Sidebar: React.FC<SidebarProps> = ({
   // 监听折叠状态变化
   useEffect(() => {
     // 避免首次渲染时触发
-    if (previousCollapsedRef.current !== collapsed && renderRef?.current) {
+    if (previousCollapsedRef.current !== collapsed) {
       // 延迟更新场景大小，等待侧边栏动画完成
       const timer = setTimeout(() => {
         const container = document.getElementById("scene-container");
-        if (container && renderRef.current) {
-          renderRef.current.resize(
-            container.clientWidth,
-            container.clientHeight
+        if (container) {
+          // 无论renderRef.current是否存在，都记录宽高
+          const width = container.clientWidth;
+          const height = container.clientHeight;
+          console.log(
+            `侧边栏状态变化，容器尺寸: ${width}x${height}, renderRef存在: ${!!renderRef?.current}`
           );
+
+          // 尝试调用resize方法，即使当前renderRef.current为null
+          if (renderRef?.current) {
+            renderRef.current.resize(width, height, true); // 使用immediate参数
+          } else {
+            console.warn("Sidebar: renderRef.current为null，无法调整大小");
+            // 记录DOM元素信息以便调试
+            console.log("scene-container元素:", container);
+          }
+        } else {
+          console.error("找不到scene-container元素");
         }
       }, 350); // 等待动画完成
 
