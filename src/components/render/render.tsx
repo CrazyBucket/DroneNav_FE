@@ -4,6 +4,7 @@ import {
   forwardRef,
   useImperativeHandle,
   useState,
+  useCallback,
 } from "react";
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/Addons.js";
@@ -19,7 +20,7 @@ import CircularText from "../CircularText";
 import EnergyPanel from "../EnergyPanel";
 
 export type RenderHandle = {
-  resize: (width: number, height: number) => void;
+  resize: (width: number, height: number, immediate?: boolean) => void;
   loadScene: (sceneId?: string) => Promise<void>;
 };
 
@@ -62,6 +63,22 @@ const Render = forwardRef<RenderHandle, RenderProps>(
     const { setCurrentCoordinate } = useCoordinatesStore();
     const [lastLoadedScene, setLastLoadedScene] = useState<string | null>(null);
     const { isLoading, setIsLoading } = useSimulationStore();
+    // 添加防抖和尺寸跟踪数据结构
+    const resizeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const latestSizeRef = useRef<{ width: number; height: number } | null>(
+      null
+    );
+    const refInitializedRef = useRef(false);
+
+    // 记录组件ref初始化状态的函数
+    const logRefInitialized = useCallback(() => {
+      console.log("Render组件ref初始化状态:", {
+        refInitialized: refInitializedRef.current,
+        hasRefObject: !!ref,
+        hasRefCurrent: ref && "current" in ref && ref.current !== null,
+        sceneManagerInitialized: !!sceneManagerRef.current,
+      });
+    }, [ref]);
 
     // 清理场景对象的辅助函数
     const clearScene = () => {
@@ -115,6 +132,79 @@ const Render = forwardRef<RenderHandle, RenderProps>(
         console.error("清理场景时发生错误:", error);
       }
     };
+
+    // 添加带防抖功能的resize处理函数
+    const handleResize = useCallback(
+      (width: number, height: number, immediate = false) => {
+        // 记录尺寸请求到latestSizeRef，无论如何确保保存
+        latestSizeRef.current = { width, height };
+
+        // 记录调试信息
+        console.log(
+          `[Render] 接收到resize请求: ${width}x${height} immediate=${immediate}`,
+          {
+            hasSceneManager: !!sceneManagerRef.current,
+          }
+        );
+
+        // 如果场景管理器未就绪，只记录警告并保存请求
+        if (!sceneManagerRef.current) {
+          console.warn(
+            `[Render] 场景管理器未就绪，缓存尺寸请求: ${width}x${height}`
+          );
+          return;
+        }
+
+        // 如果请求立即执行或者当前没有计划中的resize
+        if (immediate) {
+          // 清除任何已存在的计时器
+          if (resizeTimeoutRef.current) {
+            clearTimeout(resizeTimeoutRef.current);
+            resizeTimeoutRef.current = null;
+          }
+
+          // 执行尺寸调整前记录日志
+          console.log(`[Render] 立即调整场景大小: ${width}x${height}`);
+
+          try {
+            // 直接执行resize
+            sceneManagerRef.current.resize(width, height);
+            console.log(`[Render] 场景大小调整完成: ${width}x${height}`);
+          } catch (err) {
+            console.error(`[Render] 调整场景大小时出错:`, err);
+          }
+          return;
+        }
+
+        // 防抖处理
+        if (resizeTimeoutRef.current) {
+          clearTimeout(resizeTimeoutRef.current);
+        }
+
+        // 延迟执行实际更新
+        resizeTimeoutRef.current = setTimeout(() => {
+          if (sceneManagerRef.current && latestSizeRef.current) {
+            const { width: finalWidth, height: finalHeight } =
+              latestSizeRef.current;
+            console.log(
+              `[Render] 防抖后调整场景大小: ${finalWidth}x${finalHeight}`
+            );
+
+            try {
+              sceneManagerRef.current.resize(finalWidth, finalHeight);
+              console.log(
+                `[Render] 场景大小调整完成: ${finalWidth}x${finalHeight}`
+              );
+            } catch (err) {
+              console.error(`[Render] 防抖后调整场景大小时出错:`, err);
+            }
+
+            resizeTimeoutRef.current = null;
+          }
+        }, 100);
+      },
+      []
+    );
 
     // 加载场景的实现
     const loadSceneById = async (sceneId?: string) => {
@@ -179,59 +269,76 @@ const Render = forwardRef<RenderHandle, RenderProps>(
       }
     };
 
-    // 暴露组件方法
+    // 立即初始化并暴露组件方法
     useImperativeHandle(
       ref,
       () => {
-        console.log("初始化Render组件引用...");
+        console.log("[Render] ⚡ 初始化Render组件引用...");
+        refInitializedRef.current = true;
 
-        // 创建要暴露的对象
-        const exposedMethods = {
-          resize: (width: number, height: number) => {
-            console.log(`调整大小: ${width}x${height}`);
-            sceneManagerRef.current?.resize(width, height);
+        // 创建固定的方法对象，确保引用稳定
+        const exposedMethods: RenderHandle = {
+          resize: (width: number, height: number, immediate = false) => {
+            console.log(
+              `[Render] 接收resize调用: ${width}x${height}, immediate=${immediate}`
+            );
+            handleResize(width, height, immediate);
           },
           loadScene: async (sceneId?: string) => {
             console.log(
-              `暴露的loadScene方法被调用，场景ID: ${sceneId || "默认"}`
+              `[Render] 接收loadScene调用, 场景ID: ${sceneId || "默认"}`
             );
             return loadSceneById(sceneId);
           },
         };
 
-        console.log("Render组件引用创建完成:", exposedMethods);
+        console.log("[Render] ✅ Render组件引用创建完成:", exposedMethods);
+        logRefInitialized();
+
         return exposedMethods;
       },
+      // 注意：空依赖数组确保只初始化一次，但handleResize会通过闭包捕获最新的sceneManagerRef
       []
     );
 
-    // 添加一个useEffect来监听引用的初始化
+    // 初始化场景管理器和模型
     useEffect(() => {
-      console.log("Render组件已挂载，准备暴露方法");
-
-      // 如果已经有ref对象传入，立即记录日志
-      if (
-        ref &&
-        typeof ref === "object" &&
-        "current" in ref &&
-        ref.current !== null
-      ) {
-        console.log("Render组件ref对象存在:", ref);
-      } else {
-        console.warn("Render组件ref未提供或格式不正确");
+      console.log("[Render] 进入场景初始化useEffect");
+      if (!containerRef.current) {
+        console.warn(
+          "[Render] containerRef.current为null，无法初始化场景管理器"
+        );
+        return;
       }
 
-      return () => {
-        console.log("Render组件即将卸载");
-      };
-    }, [ref]);
-
-    useEffect(() => {
-      if (!containerRef.current) return;
-
+      console.log("[Render] 开始初始化场景管理器");
       const manager = SceneManager.getInstance(containerRef.current);
-      if (manager.getObject("drone-model")) return;
+      if (manager.getObject("drone-model")) {
+        console.log("[Render] 无人机模型已存在，跳过初始化");
+        // 即使已存在无人机模型，仍需保存场景管理器引用
+        sceneManagerRef.current = manager;
+        // 应用缓存的尺寸请求
+        if (latestSizeRef.current) {
+          const { width, height } = latestSizeRef.current;
+          console.log(`[Render] 应用缓存的尺寸请求: ${width}x${height}`);
+          manager.resize(width, height);
+        }
+        return;
+      }
+
+      // 保存场景管理器引用
       sceneManagerRef.current = manager;
+      console.log("[Render] 场景管理器已初始化并保存到ref");
+      logRefInitialized();
+
+      // 如果有缓存的尺寸请求，立即应用
+      if (latestSizeRef.current) {
+        const { width, height } = latestSizeRef.current;
+        console.log(
+          `[Render] 场景管理器初始化后，应用缓存的尺寸请求: ${width}x${height}`
+        );
+        manager.resize(width, height);
+      }
 
       // 创建 GLTFLoader 并设置解码器
       const loader = new GLTFLoader();
@@ -299,6 +406,15 @@ const Render = forwardRef<RenderHandle, RenderProps>(
             selectable: false,
           });
 
+          // 模型加载后，再次检查是否有缓存的尺寸请求
+          if (latestSizeRef.current) {
+            const { width, height } = latestSizeRef.current;
+            console.log(
+              `[Render] 无人机模型加载后，再次应用缓存的尺寸请求: ${width}x${height}`
+            );
+            manager.resize(width, height);
+          }
+
           // 加载初始场景
           loadSceneById();
         },
@@ -314,12 +430,42 @@ const Render = forwardRef<RenderHandle, RenderProps>(
       );
 
       return () => {
-        manager.removeObject("drone-model");
-        manager.removeObject("debug-sphere");
-        manager.removeObject("axes-helper");
+        console.log("[Render] 清理场景资源");
+        try {
+          manager.removeObject("drone-model");
+          manager.removeObject("debug-sphere");
+          manager.removeObject("axes-helper");
+        } catch (e) {
+          console.warn("[Render] 清理场景资源时出错:", e);
+        }
         sceneManagerRef.current = null;
       };
-    }, []);
+    }, [setCurrentCoordinate, showDebugView, logRefInitialized]);
+
+    // 监听ref状态变化，确保ref正确初始化
+    useEffect(() => {
+      console.log("[Render] 组件已挂载，检查ref初始化状态");
+      logRefInitialized();
+
+      // 测试ref连接是否正确
+      if (ref && typeof ref === "object" && "current" in ref) {
+        // 在下一个微任务中检查ref.current
+        setTimeout(() => {
+          if (ref.current) {
+            console.log(
+              "[Render] ✅ ref连接正确，ref.current已存在:",
+              ref.current
+            );
+          } else {
+            console.warn("[Render] ❌ ref.current仍为null，可能存在初始化问题");
+          }
+        }, 0);
+      }
+
+      return () => {
+        console.log("[Render] 组件即将卸载");
+      };
+    }, [ref, logRefInitialized]);
 
     // 监听场景ID变化
     useEffect(() => {
