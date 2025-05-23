@@ -118,7 +118,7 @@ export const SetTarget: React.FC = () => {
   });
   const [isReachable, setIsReachable] = useState(false);
   const lastPositionRef = React.useRef<CoordinateValue>({ x: 0, y: 0, z: 0 });
-  const { currentCoordinate } = useCoordinatesStore();
+  const { currentCoordinate, setCurrentCoordinate } = useCoordinatesStore();
   const {
     isLoading,
     setIsLoading,
@@ -158,6 +158,9 @@ export const SetTarget: React.FC = () => {
     total: number;
   } | null>(null);
 
+  // 添加引用来存储加载开始时间
+  const loadingStartTimeRef = useRef<number | null>(null);
+
   const convertCoordinates = useCallback((coords: CoordinateValue) => {
     return new THREE.Vector3(coords.x, coords.z, coords.y);
   }, []);
@@ -168,6 +171,9 @@ export const SetTarget: React.FC = () => {
       if (!data || !data.coordinates) {
         return;
       }
+
+      // 保存最后接收的坐标到引用
+      lastPositionRef.current = data.coordinates;
 
       // 转换当前坐标
       const targetPos = convertCoordinates(data.coordinates);
@@ -201,6 +207,28 @@ export const SetTarget: React.FC = () => {
           // 根据设置决定轨迹可见性，不要强制设为可见
           scene.forceRefreshAnimations();
           scene.requestRender();
+
+          // 当开始渲染轨迹时也触发一次加载状态检查（如果仍处于加载状态）
+          if (useSimulationStore.getState().isLoading) {
+            // 确保加载状态关闭
+            const minimumTime = 800; // 最小加载时间保持一致
+            const elapsed =
+              Date.now() -
+              (loadingStartTimeRef.current || Date.now() - minimumTime - 100);
+            if (elapsed >= minimumTime) {
+              useSimulationStore.getState().setIsLoading(false);
+              console.log(
+                "[SetTarget] 点位渲染检测：轨迹开始渲染，关闭加载状态"
+              );
+            } else {
+              // 如果没达到最小时间，等待剩余时间后关闭
+              const remaining = minimumTime - elapsed;
+              setTimeout(() => {
+                useSimulationStore.getState().setIsLoading(false);
+                console.log("[SetTarget] 点位渲染检测：延时关闭加载状态");
+              }, remaining);
+            }
+          }
         } catch (error) {
           if (Math.random() < 0.05) {
             console.error("[SetTarget] 更新轨迹失败:", error);
@@ -208,8 +236,22 @@ export const SetTarget: React.FC = () => {
         }
       }
     },
-    [convertCoordinates, updatePlanned, scene]
+    [convertCoordinates, updatePlanned, scene, showRealTimePath]
   );
+
+  // 添加以下effect来处理模拟完成时的坐标更新
+  useEffect(() => {
+    // 当模拟完成时，更新当前坐标为最后一个点
+    if (simulationStatus === "completed") {
+      console.log(
+        "[SetTarget] 仿真完成，更新当前坐标为:",
+        lastPositionRef.current
+      );
+
+      // 使用最后接收的位置更新全局坐标
+      setCurrentCoordinate(lastPositionRef.current);
+    }
+  }, [simulationStatus, setCurrentCoordinate]);
 
   // 初始化全局位置更新回调
   useEffect(() => {
@@ -253,6 +295,13 @@ export const SetTarget: React.FC = () => {
         const currentSelectedSceneId =
           useSimulationStore.getState().currentSceneId;
 
+        // 获取最新的currentCoordinate，并处理可能为null的情况
+        const latestCurrentCoordinate = useCoordinatesStore.getState()
+          .currentCoordinate || {
+          x: 0,
+          y: 0,
+          z: 0,
+        };
         // 设置加载状态
         setIsLoading(true);
         setSimulationStatus("planning" as SimulationStatus);
@@ -277,40 +326,16 @@ export const SetTarget: React.FC = () => {
         // 设置无人机速度
         scene.setDroneSpeed(droneSpeed);
 
-        // 配置API参数 - 确保场景ID字段正确设置
+        // 配置API参数 - 确保场景ID字段正确设置，使用最新的currentCoordinate
         const params = {
-          current: currentCoordinate,
+          current: latestCurrentCoordinate,
           target: coordinates,
           speed: droneSpeed,
           droneSize: droneSize,
           scene_id: currentSelectedSceneId || undefined,
         };
-
-        // 详细记录API请求信息
-        console.log(
-          "[SetTarget] 开始请求路径规划, 参数:",
-          JSON.stringify(params, null, 2)
-        );
-        console.log(
-          `[SetTarget] 当前场景ID: ${
-            currentSelectedSceneId || "未设置 (将使用默认场景)"
-          }`
-        );
-
-        // 调用API之前再次确认场景ID
-        console.log(
-          `[SetTarget] API请求前确认场景ID: ${params.scene_id || "未设置"}`
-        );
-
         // 调用API
         const response = await apis.startSimulation(params);
-
-        // 请求后的详细日志
-        console.log(
-          `[SetTarget] 路径规划响应: ${response.status}, 任务ID: ${
-            response.task_id
-          }, 当前场景ID: ${currentSelectedSceneId || "默认"}`
-        );
 
         // 储存临时状态
         const loadingState = {
@@ -329,9 +354,7 @@ export const SetTarget: React.FC = () => {
         scene.setPersistent("flight-trajectory", true);
 
         // 初始化实际飞行轨迹状态
-        const initialPos = convertCoordinates(currentCoordinate!);
-        console.log("[SetTarget] 初始化飞行轨迹，起点:", initialPos);
-
+        const initialPos = convertCoordinates(latestCurrentCoordinate);
         // 将起点加入飞行轨迹
         scene.addPositionToQueue(initialPos);
 
@@ -357,30 +380,23 @@ export const SetTarget: React.FC = () => {
         // 确保组件标记为正在仿真中
         setSimulationStatus("flying");
 
-        // 监听位置更新，完成初始加载状态切换
-        const checkFirstUpdate = () => {
-          if (loadingState.isFirstUpdate) {
-            // 一段时间后主动关闭加载状态
-            const elapsed = Date.now() - loadingState.loadingStartTime;
+        // 存储加载开始时间到引用，便于在渲染回调中访问
+        const loadingStartTime = Date.now();
+        loadingStartTimeRef.current = loadingStartTime;
 
-            if (elapsed >= loadingState.minimumLoadingTime) {
-              loadingState.isFirstUpdate = false;
-              setIsLoading(false);
-              console.log("[SetTarget] 加载状态已自动关闭");
-              return true;
-            }
+        // 简化加载状态处理逻辑
+        // 设置超时确保不会永久卡在加载状态
+        const loadingTimeout = setTimeout(() => {
+          if (useSimulationStore.getState().isLoading) {
+            setIsLoading(false);
+            console.warn("[SetTarget] 加载超时，强制关闭加载状态");
           }
-          return false;
-        };
-
-        // 一段时间后主动检查加载状态
-        setTimeout(() => {
-          checkFirstUpdate();
-        }, loadingState.minimumLoadingTime + 200);
+        }, 5000); // 5秒超时足够了
 
         // 移除页面可见性监听器的函数
         return () => {
           document.removeEventListener("visibilitychange", enableForcedRender);
+          clearTimeout(loadingTimeout);
         };
       };
 
@@ -418,7 +434,7 @@ export const SetTarget: React.FC = () => {
 
         Modal.confirm({
           title: "重新开始仿真",
-          content: "当前仿真尚未完成，重新开始将清除当前的轨迹。是否继续？",
+          content: "重新开始将清除当前的轨迹。是否继续？",
           okText: "继续",
           cancelText: "取消",
           onOk: startNewSimulation,

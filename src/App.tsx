@@ -9,6 +9,7 @@ import {
   useSafeMessage,
 } from "./utils/certificate";
 import { DroneProvider } from "./core/DroneContext";
+import StatsMonitor from "./components/StatsMonitor";
 
 // 页面组件
 import Home from "./pages/Home";
@@ -129,6 +130,10 @@ function App() {
               {/* 未匹配路由重定向到首页 */}
               <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>
+            {/* 全局性能监控组件 */}
+            <div className="absolute bottom-0 right-0">
+              <StatsMonitor />
+            </div>
           </BrowserRouter>
         </DroneProvider>
       </AppProvider>

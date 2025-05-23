@@ -202,16 +202,40 @@ const HomeContent: React.FC = () => {
           renderRef.current.resize(validWidth, validHeight, true);
         } catch (err) {
           console.error("[Home] 调用resize方法出错:", err);
+          // 添加重试机制
+          const retryResize = () => {
+            if (renderRef.current) {
+              try {
+                renderRef.current.resize(validWidth, validHeight, true);
+                console.log("[Home] 重试resize成功");
+              } catch (retryErr) {
+                console.error("[Home] 重试resize失败:", retryErr);
+              }
+            }
+          };
+          // 延迟100ms后重试
+          setTimeout(retryResize, 100);
         }
       } else {
         // 如果renderRef尚未准备好，记录日志
         console.warn(`[Home] renderRef.current为null，无法调整大小`);
-
-        // 可以考虑添加尺寸变化到全局变量，使组件在初始化时能获取这些值
-        // 或使用MutationObserver监控容器尺寸变化
         console.log(
           `[Home] 将在Render组件可用时自动应用尺寸: ${validWidth}x${validHeight}`
         );
+
+        // 添加ref可用性检查
+        const checkRef = () => {
+          if (renderRef.current) {
+            try {
+              renderRef.current.resize(validWidth, validHeight, true);
+              console.log("[Home] 延迟resize成功");
+            } catch (err) {
+              console.error("[Home] 延迟resize失败:", err);
+            }
+          }
+        };
+        // 延迟200ms检查ref是否可用
+        setTimeout(checkRef, 200);
       }
 
       // 延迟隐藏遮罩

@@ -13,6 +13,8 @@ const useSettings = () => {
     showRealTimePath,
     setShowPlannedPath,
     setShowRealTimePath,
+    showPerformanceMonitor,
+    setShowPerformanceMonitor,
   } = useSettingStore();
 
   const settings: SettingItem[] = [
@@ -42,6 +44,16 @@ const useSettings = () => {
       description: "显示无人机实际飞行路径",
       checked: showRealTimePath,
       onChange: setShowRealTimePath,
+      renderControl: (checked, onChange) => (
+        <Switch checked={checked} onChange={onChange} />
+      ),
+    },
+    {
+      id: "performance-monitor",
+      title: "性能监控",
+      description: "显示FPS和性能指标",
+      checked: showPerformanceMonitor,
+      onChange: setShowPerformanceMonitor,
       renderControl: (checked, onChange) => (
         <Switch checked={checked} onChange={onChange} />
       ),

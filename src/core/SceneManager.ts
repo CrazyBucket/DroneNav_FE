@@ -1359,9 +1359,6 @@ export class SceneManager {
   public resize(width: number, height: number): void {
     // 更严格的参数验证和边界检查
     if (!width || !height || isNaN(width) || isNaN(height)) {
-      console.warn(
-        `[SceneManager] 无效的尺寸参数: width=${width}, height=${height}`
-      );
       return;
     }
 
@@ -1369,25 +1366,15 @@ export class SceneManager {
     width = Math.max(1, Math.round(width));
     height = Math.max(1, Math.round(height));
 
-    console.log(`[SceneManager] 调整场景尺寸: ${width}x${height}`);
-
     // 检查尺寸变化是否明显
     if (this.renderer) {
       const currentSize = this.renderer.getSize(new THREE.Vector2());
 
       // 如果尺寸未变化，只触发渲染
       if (currentSize.width === width && currentSize.height === height) {
-        console.log(
-          `[SceneManager] 尺寸未变化(${width}x${height})，仅触发重新渲染`
-        );
         this.requestRender();
         return;
       }
-
-      // 记录尺寸变化情况
-      console.log(
-        `[SceneManager] 尺寸变化: ${currentSize.width}x${currentSize.height} -> ${width}x${height}`
-      );
     }
 
     try {
@@ -1395,7 +1382,6 @@ export class SceneManager {
       if (this.renderer) {
         try {
           this.renderer.setSize(width, height, true); // 使用updateStyle=true确保CSS尺寸同步
-          console.log(`[SceneManager] 渲染器尺寸已更新: ${width}x${height}`);
         } catch (err) {
           console.error(`[SceneManager] 更新渲染器尺寸失败:`, err);
         }
@@ -1406,11 +1392,6 @@ export class SceneManager {
         try {
           this.camera.aspect = width / height;
           this.camera.updateProjectionMatrix();
-          console.log(
-            `[SceneManager] 相机参数已更新, 宽高比: ${this.camera.aspect.toFixed(
-              3
-            )}`
-          );
         } catch (err) {
           console.error(`[SceneManager] 更新相机参数失败:`, err);
         }
@@ -1630,9 +1611,6 @@ export class SceneManager {
     // 添加或移除对象ID到持久对象集合
     if (persistent) {
       this.persistentObjects.add(id);
-      console.log(
-        `对象 ${id} 被标记为持久对象，现有 ${this.persistentObjects.size} 个持久对象`
-      );
     } else {
       this.persistentObjects.delete(id);
     }
@@ -1665,7 +1643,6 @@ export class SceneManager {
       this.trajectoryPaths.planned.length >= 2 &&
       !this.getObject("planned-trajectory")
     ) {
-      console.log("[SceneManager] 检测到计划轨迹缺失，正在恢复");
       this.renderTrajectory("planned");
     }
 
@@ -1673,20 +1650,11 @@ export class SceneManager {
       this.trajectoryPaths.flight.length >= 2 &&
       !this.getObject("flight-trajectory")
     ) {
-      console.log("[SceneManager] 检测到飞行轨迹缺失，正在恢复");
       this.renderTrajectory("flight");
     }
 
     // 返回持久对象列表
     const objects = Array.from(this.persistentObjects);
-
-    // 添加调试信息 - 应用程序全局状态下可见
-    console.log(`[SceneManager] 持久对象: ${objects.length}个`, {
-      objects,
-      plannedPath: this.trajectoryPaths.planned.length,
-      flightPath: this.trajectoryPaths.flight.length,
-    });
-
     return objects;
   }
 
