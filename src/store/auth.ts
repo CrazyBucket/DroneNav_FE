@@ -29,6 +29,10 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
     try {
       await authService.login(data);
       await get().fetchCurrentUser();
+      // 登录成功后延迟刷新页面
+      setTimeout(() => {
+        window.location.reload();
+      }, 100);
     } catch (error: any) {
       set({
         error: error.response?.data?.detail || "登录失败，请检查用户名和密码",

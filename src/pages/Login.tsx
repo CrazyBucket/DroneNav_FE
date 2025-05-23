@@ -1,9 +1,11 @@
-import React, { useEffect } from "react";
+import React, { useEffect, useState } from "react";
 import { Form, Input } from "antd";
 import { UserOutlined, LockOutlined } from "@ant-design/icons";
 import { useAuthStore } from "@/store/auth";
 import { LoginRequest } from "@/types/auth";
 import { getOrCreateFingerprint } from "@/utils/fingerprint";
+import { useNavigate } from "react-router-dom";
+import { message } from "antd";
 
 // 引入新组件
 import AuthLayout from "@/components/auth/AuthLayout";
@@ -23,7 +25,10 @@ const autofillOverrideStyles = {
 };
 
 const Login: React.FC = () => {
-  const { login, error, isLoading, clearError } = useAuthStore();
+  const { login, error, isLoading, clearError, isAuthenticated } =
+    useAuthStore();
+  const navigate = useNavigate();
+  const [loginSuccess, setLoginSuccess] = useState(false);
 
   // 生成设备指纹
   useEffect(() => {
@@ -37,9 +42,22 @@ const Login: React.FC = () => {
     };
   }, [clearError]);
 
+  // 监听认证状态变化
+  useEffect(() => {
+    if (isAuthenticated && !loginSuccess) {
+      setLoginSuccess(true);
+      // 显示成功提示，然后刷新页面
+      message.success("登录成功，正在跳转...");
+    }
+  }, [isAuthenticated, loginSuccess]);
+
   // 提交表单
-  const onFinish = (values: LoginRequest) => {
-    login(values);
+  const onFinish = async (values: LoginRequest) => {
+    try {
+      await login(values);
+    } catch (err) {
+      // 错误已在store中处理
+    }
   };
 
   return (
@@ -58,6 +76,7 @@ const Login: React.FC = () => {
         onFinish={onFinish}
         autoComplete="off"
         data-form-type="login"
+        disabled={loginSuccess}
       >
         {/* 添加隐藏的输入框分散浏览器注意力 */}
         <div style={{ display: "none" }}>
