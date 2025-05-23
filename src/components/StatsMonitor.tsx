@@ -11,91 +11,70 @@ const StatsMonitor: React.FC<StatsMonitorProps> = ({
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const statsRef = useRef<Stats | null>(null);
-  const mountedRef = useRef(false); // 记录DOM挂载状态
+  const animationFrameRef = useRef<number | null>(null);
   const { showPerformanceMonitor } = useSettingStore();
 
   useEffect(() => {
-    // 只在组件挂载时创建一次Stats实例
-    const stats = new Stats();
-    statsRef.current = stats;
+    let isComponentMounted = true;
 
-    // 配置Stats面板
-    stats.showPanel(0); // 0: fps, 1: ms, 2: mb, 3: custom
+    // 清理函数
+    const cleanup = () => {
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current);
+        animationFrameRef.current = null;
+      }
 
-    // 设置Stats DOM元素的样式
-    if (stats.dom) {
-      // 重置stats.js默认的样式 - 确保我们的位置设置生效
-      stats.dom.style.cssText = "";
-      stats.dom.style.position = "static"; // 使其遵循父容器的布局
-      console.log("[StatsMonitor] 重置Stats面板默认样式");
+      if (containerRef.current && statsRef.current?.dom) {
+        try {
+          containerRef.current.removeChild(statsRef.current.dom);
+        } catch (e) {
+          console.warn("[StatsMonitor] 清理DOM时出错:", e);
+        }
+      }
+      statsRef.current = null;
+    };
+
+    // 如果不显示监控，直接清理并返回
+    if (!showPerformanceMonitor) {
+      cleanup();
+      return cleanup;
     }
 
-    if (containerRef.current) {
+    // 初始化stats.js
+    if (!statsRef.current && isComponentMounted) {
       try {
-        containerRef.current.appendChild(stats.dom);
-        mountedRef.current = true; // 标记已挂载
-        console.log("[StatsMonitor] Stats面板已挂载");
+        const stats = new Stats();
+        statsRef.current = stats;
+        stats.showPanel(0);
+
+        if (containerRef.current && stats.dom) {
+          // 重置stats.js默认样式
+          stats.dom.style.cssText = "";
+          stats.dom.style.position = "static";
+          containerRef.current.appendChild(stats.dom);
+          console.log("[StatsMonitor] 性能监控面板已初始化");
+        }
       } catch (error) {
-        console.error("[StatsMonitor] 挂载Stats面板失败:", error);
+        console.error("[StatsMonitor] 初始化stats.js失败:", error);
+        return cleanup;
       }
     }
 
-    // 设置动画循环
-    let animationFrameId: number;
+    // 动画循环
     const animate = () => {
-      if (!statsRef.current) return;
-
-      statsRef.current.begin();
-      // 这里什么都不做，只是测量帧率
-      statsRef.current.end();
-
-      // 继续请求下一帧
-      if (showPerformanceMonitor && statsRef.current) {
-        animationFrameId = requestAnimationFrame(animate);
+      if (statsRef.current && isComponentMounted) {
+        statsRef.current.begin();
+        statsRef.current.end();
+        animationFrameRef.current = requestAnimationFrame(animate);
       }
     };
 
-    // 仅在showPerformanceMonitor为true时开始动画
-    if (showPerformanceMonitor && statsRef.current) {
-      console.log("[StatsMonitor] 开始性能监控");
-      animationFrameId = requestAnimationFrame(animate);
-    }
+    animate();
 
-    // 清理函数
+    // 组件卸载时清理
     return () => {
-      // 取消动画帧请求
-      if (animationFrameId) {
-        cancelAnimationFrame(animationFrameId);
-      }
-
-      // 安全地移除DOM元素
-      if (containerRef.current && statsRef.current && mountedRef.current) {
-        try {
-          // 检查是否真的是子节点
-          let isChild = false;
-          for (let i = 0; i < containerRef.current.children.length; i++) {
-            if (containerRef.current.children[i] === statsRef.current.dom) {
-              isChild = true;
-              break;
-            }
-          }
-
-          if (isChild) {
-            containerRef.current.removeChild(statsRef.current.dom);
-            console.log("[StatsMonitor] Stats面板已移除");
-          } else {
-            console.log(
-              "[StatsMonitor] Stats面板不是当前节点的子元素，跳过移除"
-            );
-          }
-        } catch (e) {
-          console.error("[StatsMonitor] 移除Stats面板时出错:", e);
-        }
-      }
-
-      // 重置状态
-      mountedRef.current = false;
-      statsRef.current = null;
+      isComponentMounted = false;
+      cleanup();
     };
   }, [showPerformanceMonitor]);
 
@@ -126,7 +105,6 @@ const StatsMonitor: React.FC<StatsMonitorProps> = ({
         position: "fixed",
         zIndex: 9999,
         ...getPositionStyle(),
-        // 添加容器样式，确保位置正确
         display: "block",
         width: "auto",
         height: "auto",

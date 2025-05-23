@@ -13,6 +13,10 @@ interface SettingState {
   setShowPlannedPath: (show: boolean) => void;
   setShowRealTimePath: (show: boolean) => void;
 
+  // 性能监控设置
+  showPerformanceMonitor: boolean;
+  setShowPerformanceMonitor: (show: boolean) => void;
+
   // 无人机物理设置
   droneSize: { width: number; height: number; depth: number };
   droneSpeed: number;
@@ -53,6 +57,11 @@ export const useSettingStore = create<SettingState>((set, get) => ({
   showRealTimePath: true, // 默认显示实时轨迹
   setShowPlannedPath: (show: boolean) => set({ showPlannedPath: show }),
   setShowRealTimePath: (show: boolean) => set({ showRealTimePath: show }),
+
+  // 性能监控设置
+  showPerformanceMonitor: false,
+  setShowPerformanceMonitor: (show: boolean) =>
+    set({ showPerformanceMonitor: show }),
 
   // 无人机物理设置（默认值）
   droneSize: { width: 0.5, height: 0.12, depth: 0.4 }, // 默认尺寸与后端匹配
