@@ -70,6 +70,9 @@ dependencies:
   react-router-dom:
     specifier: ^7.3.0
     version: 7.5.0(react-dom@18.2.0)(react@18.2.0)
+  stats.js:
+    specifier: ^0.17.0
+    version: 0.17.0
   three:
     specifier: ^0.173.0
     version: 0.173.0
