@@ -37,6 +37,9 @@ dependencies:
   crypto-js:
     specifier: ^4.2.0
     version: 4.2.0
+  dompurify:
+    specifier: ^3.2.6
+    version: 3.2.6
   framer-motion:
     specifier: ^12.10.0
     version: 12.10.0(react-dom@18.2.0)(react@18.2.0)
@@ -1343,6 +1346,12 @@ packages:
       meshoptimizer: 0.18.1
     dev: false
 
+  /@types/trusted-types@2.0.7:
+    resolution: {integrity: sha512-ScaPdn1dQczgbl0QFTeTOmVHFULt394XJgOQNoyVhZ6r2vLnMLJfBPd53SB52T/3G36VI1/g2MZaX0cwDuXsfw==}
+    requiresBuild: true
+    dev: false
+    optional: true
+
   /@types/webxr@0.5.21:
     resolution: {integrity: sha512-geZIAtLzjGmgY2JUi6VxXdCrTb99A7yP49lxLr2Nm/uIK0PkkxcEi4OGhoGDO4pxCf3JwGz2GiJL2Ej4K2bKaA==}
     dev: false
@@ -1887,6 +1896,12 @@ packages:
       dnd-core: ^16.0.1
     dependencies:
       dnd-core: 16.0.1
+    dev: false
+
+  /dompurify@3.2.6:
+    resolution: {integrity: sha512-/2GogDQlohXPZe6D6NOgQvXLPSYBqIWMnZ8zzOhn09REE4eyAzb+Hed3jhoM9OkuaJ8P6ZGTTVWQKAi8ieIzfQ==}
+    optionalDependencies:
+      '@types/trusted-types': 2.0.7
     dev: false
 
   /draco3d@1.5.7:
