@@ -176,7 +176,6 @@ const Sidebar: React.FC<SidebarProps> = ({
         />
       </div>
 
-      {/* 右侧功能区 - 使用pointer-events-none防止过渡动画期间的交互 */}
       <div
         className={clsx(
           "flex flex-col",
@@ -197,7 +196,9 @@ const Sidebar: React.FC<SidebarProps> = ({
           <div className="h-12 border-b border-gray-600/50 flex items-center px-4 text-white/90 font-medium">
             {navButtons.find(btn => btn.key === activeArea)?.title}
           </div>
-          <div className="flex-1 overflow-auto">{renderContent()}</div>
+          <div className="flex-1 overflow-auto scrollbar-hide">
+            {renderContent()}
+          </div>
         </div>
       </div>
     </div>

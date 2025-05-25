@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from "react";
 import { Form, Input } from "antd";
 import { LockOutlined } from "@ant-design/icons";
-import { useNavigate, useParams } from "react-router-dom";
-import { PasswordResetConfirmRequest } from "@/types/auth";
+import { useNavigate, useLocation } from "react-router-dom";
+import { useAuthStore } from "@/store/auth";
 import { confirmPasswordReset } from "@/services/auth";
 
 // 引入新组件
@@ -15,49 +15,66 @@ import AnimatedLink from "@/components/auth/AnimatedLink";
 import PasswordStrengthMeter from "@/components/auth/PasswordStrengthMeter";
 
 const ResetPassword: React.FC = () => {
-  const { token } = useParams<{ token: string }>();
   const navigate = useNavigate();
+  const location = useLocation();
   const [form] = Form.useForm();
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
+  const { login } = useAuthStore();
 
   // 表单中的密码值
   const password = Form.useWatch("new_password", form);
 
-  // 检查是否有令牌
+  // 检查临时令牌和验证码
   useEffect(() => {
-    if (!token) {
-      setError("无效的密码重置链接");
+    const state = location.state as {
+      tempToken?: string;
+      verificationCode?: string;
+      email?: string;
+    };
+    if (!state?.tempToken || !state?.verificationCode || !state?.email) {
+      setError("无效的重置链接，请重新开始密码重置流程");
+      setTimeout(() => {
+        navigate("/forgot-password", { replace: true });
+      }, 3000);
     }
-  }, [token]);
+  }, [location.state, navigate]);
 
   // 提交表单
   const onFinish = async (values: {
     new_password: string;
     confirm_password: string;
   }) => {
-    if (!token) {
-      setError("无效的密码重置链接");
-      return;
-    }
-
     setIsLoading(true);
     setError(null);
 
     try {
-      const request: PasswordResetConfirmRequest = {
-        token,
-        new_password: values.new_password,
+      const state = location.state as {
+        tempToken?: string;
+        verificationCode?: string;
+        email?: string;
       };
+      if (!state?.tempToken || !state?.verificationCode) {
+        throw new Error("重置会话无效，请重新开始密码重置流程");
+      }
 
-      await confirmPasswordReset(request);
+      // 调用后端API重置密码
+      await confirmPasswordReset({
+        temp_token: state.tempToken,
+        verification_code: state.verificationCode,
+        new_password: values.new_password,
+      });
+
       setSuccess(true);
 
-      // 重置成功后3秒跳转到登录页
+      // 密码重置成功后跳转到登录页面
       setTimeout(() => {
-        navigate("/login");
-      }, 3000);
+        navigate("/login", {
+          replace: true,
+          state: { message: "密码重置成功，请使用新密码登录" },
+        });
+      }, 2000);
     } catch (err: any) {
       setError(err.response?.data?.detail || "密码重置失败，请稍后重试");
     } finally {
@@ -66,7 +83,7 @@ const ResetPassword: React.FC = () => {
   };
 
   return (
-    <AuthLayout title="设置新密码" subtitle="请输入您的新密码">
+    <AuthLayout title="设置新密码" subtitle="请设置您的新密码">
       <AnimatedAlert
         visible={!!error}
         type="error"
@@ -79,14 +96,14 @@ const ResetPassword: React.FC = () => {
         visible={success}
         type="success"
         message="密码已重置"
-        description="您的密码已成功重置，即将跳转到登录页面..."
+        description="密码重置成功，正在跳转..."
       />
 
       <AnimatedForm
         form={form}
         name="reset-password"
         onFinish={onFinish}
-        disabled={success || !token}
+        disabled={success}
       >
         <AnimatedFormItem>
           <Form.Item
@@ -144,7 +161,7 @@ const ResetPassword: React.FC = () => {
               type="primary"
               htmlType="submit"
               loading={isLoading}
-              disabled={success || !token}
+              disabled={success}
             >
               重置密码
             </AnimatedButton>

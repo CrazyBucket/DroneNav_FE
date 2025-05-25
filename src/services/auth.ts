@@ -6,6 +6,7 @@ import {
   PasswordResetRequest,
   PasswordResetConfirmRequest,
   RefreshTokenRequest,
+  PasswordResetResponse,
 } from "@/types/auth";
 import axios from "axios";
 import { BASE_URL } from "./config";
@@ -107,11 +108,11 @@ export const refreshToken = async (
  */
 export const requestPasswordReset = async (
   data: PasswordResetRequest
-): Promise<{ message: string; reset_token?: string }> => {
-  const response = await authApi.post<{
-    message: string;
-    reset_token?: string;
-  }>("/api/auth/password-reset/request", data);
+): Promise<PasswordResetResponse> => {
+  const response = await authApi.post<PasswordResetResponse>(
+    "/api/auth/password-reset/request",
+    data
+  );
   return response.data;
 };
 

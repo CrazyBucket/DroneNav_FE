@@ -85,10 +85,6 @@ const EnergyPanel: React.FC = () => {
   useEffect(() => {
     // 如果重力效应未启用，不需要计算
     if (!gravityEffect) return;
-
-    // 添加测试日志输出
-    console.log("[EnergyPanel] 能耗计算初始化");
-
     // 计算能耗数据的函数，但限制频率
     const calculateEnergyData = () => {
       const now = Date.now();
@@ -121,21 +117,6 @@ const EnergyPanel: React.FC = () => {
           Math.abs(lastPos.x - currentPosition.x) > 0.005 ||
           Math.abs(lastPos.y - currentPosition.y) > 0.005 ||
           Math.abs(lastPos.z - currentPosition.z) > 0.005;
-
-        // 调试输出
-        if (hasPositionChanged) {
-          console.log(
-            "[EnergyPanel] 位置变化:",
-            lastPos
-              ? `Y: ${lastPos.y.toFixed(3)} -> ${currentPosition.y.toFixed(3)}`
-              : "初始位置",
-            `变化量: ${
-              lastPos
-                ? Math.abs(currentPosition.y - lastPos.y).toFixed(3)
-                : "N/A"
-            }`
-          );
-        }
 
         // 如果是首次计算或者位置未变化，设置初始值或保持当前值
         if (isFirstCalculation) {
@@ -206,15 +187,6 @@ const EnergyPanel: React.FC = () => {
             // 水平飞行
             currentState = "level";
           }
-
-          // 调试输出
-          console.log(
-            `[EnergyPanel] 垂直速度: ${verticalSpeed.toFixed(
-              4
-            )} m/s, 飞行状态: ${currentState}, 高度: ${currentPosition.y.toFixed(
-              2
-            )}`
-          );
         }
 
         // 只有状态变化时才更新，减少渲染
@@ -295,11 +267,6 @@ const EnergyPanel: React.FC = () => {
           newEnergyData.rotorPower !== energyData.rotorPower ||
           newEnergyData.specificEnergy !== energyData.specificEnergy
         ) {
-          console.log(
-            "[EnergyPanel] 更新能耗数据:",
-            newEnergyData.totalPower.toFixed(1),
-            "W"
-          );
           setEnergyData(newEnergyData);
 
           // 更新能耗历史数据

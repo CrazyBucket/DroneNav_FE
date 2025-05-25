@@ -1,11 +1,10 @@
 import React, { useEffect, useState } from "react";
-import { Form, Input } from "antd";
+import { Form, Input, message } from "antd";
 import { UserOutlined, LockOutlined } from "@ant-design/icons";
 import { useAuthStore } from "@/store/auth";
 import { LoginRequest } from "@/types/auth";
 import { getOrCreateFingerprint } from "@/utils/fingerprint";
-import { useNavigate } from "react-router-dom";
-import { message } from "antd";
+import { useNavigate, useLocation } from "react-router-dom";
 
 // 引入新组件
 import AuthLayout from "@/components/auth/AuthLayout";
@@ -28,6 +27,7 @@ const Login: React.FC = () => {
   const { login, error, isLoading, clearError, isAuthenticated } =
     useAuthStore();
   const navigate = useNavigate();
+  const location = useLocation();
   const [loginSuccess, setLoginSuccess] = useState(false);
 
   // 生成设备指纹
@@ -50,6 +50,16 @@ const Login: React.FC = () => {
       message.success("登录成功，正在跳转...");
     }
   }, [isAuthenticated, loginSuccess]);
+
+  // 显示密码重置成功消息
+  useEffect(() => {
+    const successMessage = location.state?.message;
+    if (successMessage) {
+      message.success(successMessage);
+      // 清除消息，避免刷新页面时重复显示
+      navigate(location.pathname, { replace: true, state: {} });
+    }
+  }, [location.state, navigate]);
 
   // 提交表单
   const onFinish = async (values: LoginRequest) => {

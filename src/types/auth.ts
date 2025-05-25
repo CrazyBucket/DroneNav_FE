@@ -33,9 +33,17 @@ export interface PasswordResetRequest {
   email: string;
 }
 
+// 密码重置响应类型
+export interface PasswordResetResponse {
+  message: string;
+  temp_token?: string;
+  exists: boolean;
+}
+
 // 密码重置确认类型
 export interface PasswordResetConfirmRequest {
-  token: string;
+  temp_token: string;
+  verification_code: string;
   new_password: string;
 }
 
